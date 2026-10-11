@@ -5,7 +5,7 @@ Last verified: 2026-10-11, Fedora 44 (kernel 7.2.8), Python 3.14.7, JDK 25, Grad
 ## Commands
 
 ```bash
-# Fedora receiver (92 tests, real TLS sockets on 127.0.0.1)
+# Fedora receiver (153 tests: real TLS sockets, subprocess CLI, mDNS on the real LAN interface)
 cd fedora && .venv/bin/python -m pytest -q
 cd fedora && .venv/bin/ruff check . && .venv/bin/ruff format --check .
 
@@ -20,9 +20,9 @@ cd android && ./gradlew testDebugUnitTest
 
 | Suite | Result | Environment |
 |---|---|---|
-| `fedora/tests` | **92 passed** | mock-free: real uvicorn + TLS over loopback |
-| Android unit | **43 run, 40 passed, 3 skipped (interop), 0 failed** | JVM, fake receiver |
-| `scripts/interop_test.sh` | **passed (4 tests)**: pinned handshake, 24 MB file byte-identical, interrupted upload resumed byte-identical, outbox download with Range resume, text message, chunked unknown-size upload, upload after an 8 s idle pause, forged fingerprint fails closed | loopback, JVM client |
+| `fedora/tests` | **152 passed + 1 skipped (Tk) on Python 3.14; all 154 incl. Tk GUI on Python 3.13/Tk 9** | mock-free: real uvicorn + TLS over loopback |
+| Android unit | **61 run, 56 passed, 5 skipped (interop), 0 failed** | JVM, fake receiver |
+| `scripts/interop_test.sh` | **passed (6 tests)**: folder structure preserved + `../` path refused, pinned handshake, 24 MB file byte-identical, interrupted upload resumed byte-identical, outbox download with Range resume, text message, chunked unknown-size upload, upload after an 8 s idle pause, forged fingerprint fails closed | loopback, JVM client |
 | Release build `assembleRelease` | builds (unsigned, R8 on, ~2.5 MB) | — |
 | GTK window smoke (scripted) | passed: start → pair dialog → approve dialog → transfer row → stop | real Wayland session, scripted clicks, **loopback network** |
 
@@ -48,6 +48,14 @@ Android: certificate pinning (match, mismatch, expired, empty chain), QR parsing
 hosts rejected), streaming hash with bounded buffer, unknown-size (chunked), file changing mid-send,
 engine: approval wait, reject, expiry, cancel, network loss, partial failure, unreadable files,
 unknown size has no fake progress, duplicate prevention, speed meter.
+
+## Portability evidence and its limits
+
+* Receiver suite passes on Python 3.14 (Fedora system) and 3.13 (standalone build with Tk).
+* The Windows storage fallback (no `dir_fd`) is exercised on Linux by forcing it; Windows filename rules are unit-tested as pure functions.
+* `ui_tk.py` was run for real (pairing, approval, folder transfer, outbox, stop) under Tk 9 on Linux/Wayland.
+* **Nothing has run on Windows or macOS.** `.github/workflows/ci.yml` exists to do that, but has not been executed.
+* mDNS Android side (`NsdLocator`) can't run on the JVM; the fallback *logic* is unit-tested, the NsdManager calls are not.
 
 ## Not provable here (important for the "no mobile data" requirement)
 

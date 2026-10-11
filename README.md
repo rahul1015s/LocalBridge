@@ -31,16 +31,19 @@ computer, directly over your own Wi-Fi or phone hotspot. No cloud, no account, n
 * **Text and links** both ways (never opened automatically)
 * **Local only**: files go over your Wi-Fi/hotspot, sockets are bound to that network, never mobile data;
   bytes are sent exactly as stored (no recompression)
-* Desktop notifications and an *Open folder* button
+* **Whole folders** in both directions, structure preserved, hostile paths rejected
+* **mDNS discovery**: the phone finds the computer by a random ID if the QR's address isn't reachable (never grants trust)
+* **Windows/macOS/any-OS receivers**: Tk GUI and a terminal receiver (`python -m localbridge --cli`)
+* Desktop notifications (GTK) and an *Open folder* button
 * Native GTK4/Libadwaita desktop app; Jetpack Compose/Material 3 Android app (teal, light/dark)
 * Receiver binds one chosen interface on an ephemeral port and stops listening when you press Stop
 
-Not yet: saved/trusted devices (each session is re-paired), folder transfer, IPv6, discovery without QR,
-Windows/macOS receivers.
+Not yet: saved/trusted devices (each session is re-paired), IPv6, pairing without the QR (a short PIN would
+need a PAKE, deliberately not hand-rolled), empty-folder transfer, drag-and-drop in the Tk GUI.
 
 ## Supported platforms
 
-Fedora 44 (developed and tested here). Android 10+ (minSdk 29, target 36; only built, not run).
+Fedora 44 (GTK4 app; developed and tested here). Windows/macOS: Tk GUI + terminal receiver, **written and tested on Linux only**; CI is set up to try them. Android 10+ (minSdk 29, target 36; only built, not run).
 
 ## Install & run (development)
 
@@ -61,10 +64,20 @@ ports; if you use a stricter zone and the phone can't connect, allow it yourself
 ## Tests
 
 ```bash
-cd fedora && .venv/bin/python -m pytest -q        # 92 tests
-cd android && ./gradlew testDebugUnitTest         # 43 tests (3 need the interop script)
+cd fedora && .venv/bin/python -m pytest -q        # 153 tests
+cd android && ./gradlew testDebugUnitTest         # 61 tests (5 need the interop script)
 ./scripts/interop_test.sh                         # Kotlin client <-> Python receiver, real TLS
 ```
+
+## Windows / macOS (experimental)
+
+```bash
+pip install -e fedora         # Python 3.11+; tkinter ships with python.org installers
+python -m localbridge          # Tk window (falls back to the terminal receiver if tkinter is missing)
+python -m localbridge --cli    # terminal receiver with ASCII QR
+```
+Allow Python through the OS firewall prompt for private networks. Nothing here has been run on Windows or
+macOS yet — see docs/testing.md.
 
 ## Repository layout
 
