@@ -202,6 +202,7 @@ def create_app(core: Core) -> FastAPI:
                 {
                     "file_id": f.file_id,
                     "name": f.name,
+                    "dir": "/".join(f.dirs) or None,
                     "size": f.declared_size,
                     "state": f.state.value,
                     "received": f.received,
@@ -337,7 +338,9 @@ def create_app(core: Core) -> FastAPI:
             mgr.finish_file(t, f, ok=False, sha256=actual, error="Integrity check failed.")
             raise ApiError(422, "integrity_failed", "SHA-256 or size does not match.")
         try:
-            path = await asyncio.to_thread(core.dest.finalize, partial.path, f.name)
+            path = await asyncio.to_thread(
+                core.dest.finalize, partial.path, f.name, f.dirs, t.top_map
+            )
         except ApiError as e:
             partial.discard()
             mgr.finish_file(t, f, ok=False, error=e.message)
@@ -366,6 +369,8 @@ def create_app(core: Core) -> FastAPI:
                     "size": i.size,
                     "sha256": i.sha256,
                     "text": i.text,
+                    "dir": i.dir,
+                    "group": i.group,
                 }
                 for i in core.outbox.pending_for(s.session_id)
             ]

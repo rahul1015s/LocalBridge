@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .models import (
@@ -23,7 +23,7 @@ from .models import (
     TransferState,
 )
 from .security import new_id
-from .storage import sanitize_filename
+from .storage import sanitize_filename, sanitize_relpath
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +52,7 @@ class FileEntry:
     sha256: str | None = None
     saved_path: Path | None = None
     error: str | None = None
+    dirs: list[str] = field(default_factory=list)  # validated relative folder components
     epoch: int = 0  # bumps when a new stream supersedes a silent one
     last_activity: float = 0.0
 
@@ -67,6 +68,7 @@ class Transfer:
     updated_at: float = 0.0
     reason: str | None = None
     uploads_in_flight: int = 0
+    top_map: dict[str, str] = field(default_factory=dict)  # requested -> actual top-level folder
 
     @property
     def total_declared(self) -> int:
@@ -152,7 +154,8 @@ class TransferManager:
                     raise ApiError(413, "file_too_large", "A file exceeds the size limit.")
                 total += spec.size
             name = sanitize_filename(spec.name, lim.max_filename_bytes)
-            entries.append(FileEntry(new_id(), name, spec.size))
+            dirs = sanitize_relpath(spec.dir, lim.max_dir_depth, lim.max_filename_bytes)
+            entries.append(FileEntry(new_id(), name, spec.size, dirs=dirs))
         if total > lim.max_transfer_size:
             raise ApiError(413, "transfer_too_large", "Transfer exceeds the aggregate limit.")
         with self._lock:

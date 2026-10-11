@@ -40,6 +40,8 @@ ignore = ["S101"]
 "tests/*" = ["S"]
 "localbridge/ui/*" = ["E501"]
 "localbridge/app.py" = ["E501"]
+"localbridge/storage.py" = ["E501"]
+"localbridge/server.py" = ["E501"]
 
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["fastapi.Depends"]

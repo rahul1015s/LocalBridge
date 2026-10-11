@@ -153,7 +153,12 @@ class HttpReceiver(
             "files",
             org.json.JSONArray().also { arr ->
                 files.forEach { f ->
-                    arr.put(JSONObject().put("name", f.name).apply { if (f.size != null) put("size", f.size) })
+                    arr.put(
+                        JSONObject().put("name", f.name).apply {
+                            if (f.size != null) put("size", f.size)
+                            if (f.dir != null) put("dir", f.dir)
+                        },
+                    )
                 }
             },
         ).toString().toRequestBody(JSON)
@@ -215,6 +220,8 @@ class HttpReceiver(
                 o.getString("id"), o.getString("kind"), o.getString("name"), o.optLong("size", 0),
                 if (o.isNull("sha256")) null else o.getString("sha256"),
                 if (o.isNull("text")) null else o.getString("text"),
+                if (o.isNull("dir")) null else o.optString("dir"),
+                if (o.isNull("group")) null else o.optString("group"),
             )
         }
     }

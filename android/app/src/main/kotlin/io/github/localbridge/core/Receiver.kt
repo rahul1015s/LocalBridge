@@ -7,7 +7,7 @@ enum class FileStatus { PENDING, RECEIVING, VERIFYING, INTERRUPTED, DONE, FAILED
 data class RemoteFile(val fileId: String, val name: String, val size: Long?, val state: FileStatus, val received: Long = 0)
 
 /** Something the computer wants to send to this phone. The person must accept it first. */
-data class OutboxEntry(val id: String, val kind: String, val name: String, val size: Long, val sha256: String?, val text: String?)
+data class OutboxEntry(val id: String, val kind: String, val name: String, val size: Long, val sha256: String?, val text: String?, val dir: String? = null, val group: String? = null)
 
 data class RemoteTransfer(
     val transferId: String,
@@ -16,7 +16,7 @@ data class RemoteTransfer(
     val files: List<RemoteFile>,
 )
 
-data class FileSpec(val name: String, val size: Long?)
+data class FileSpec(val name: String, val size: Long?, val dir: String? = null)
 
 data class UploadResult(val sha256: String, val bytes: Long)
 

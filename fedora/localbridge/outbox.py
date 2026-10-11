@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
+import queue
 import threading
 import time
 from dataclasses import dataclass, field
@@ -38,6 +40,8 @@ class OutboxItem:
     text: str | None = None
     path: Path | None = None
     sha256: str | None = None
+    dir: str | None = None  # relative folder for folder sends, '/'-separated
+    group: str | None = None  # same value for every file of one folder send
     state: str = PREPARING
     detail: str | None = None
     created: float = field(default_factory=time.time)
@@ -50,6 +54,8 @@ class OutboxManager:
         self._lock = threading.RLock()
         self._items: dict[str, OutboxItem] = {}
         self._listeners: list = []
+        self._hash_q: queue.Queue[OutboxItem | None] = queue.Queue()
+        self._worker: threading.Thread | None = None
 
     def subscribe(self, cb) -> None:
         self._listeners.append(cb)
@@ -61,9 +67,9 @@ class OutboxManager:
             except Exception:  # noqa: BLE001 - UI errors must not break the protocol
                 log.exception("outbox listener failed")
 
-    def _check_capacity(self) -> None:
+    def _check_capacity(self, extra: int = 1) -> None:
         live = [i for i in self._items.values() if i.state in (PREPARING, READY)]
-        if len(live) >= self._limits.max_outbox_items:
+        if len(live) + extra > self._limits.max_outbox_items:
             raise ApiError(429, "outbox_full", "Too many items waiting to be sent.")
 
     def add_text(self, session_id: str, text: str) -> OutboxItem:
@@ -82,14 +88,79 @@ class OutboxManager:
         p = Path(path).resolve()
         if not p.is_file():
             raise ApiError(400, "not_a_file", "Only regular files can be sent.")
-        st = p.stat()
         with self._lock:
             self._check_capacity()
-            item = OutboxItem(new_id(), session_id, "file", p.name, st.st_size, path=p)
+            item = OutboxItem(new_id(), session_id, "file", p.name, p.stat().st_size, path=p)
             self._items[item.item_id] = item
         self._emit(item)
-        threading.Thread(target=self._hash, args=(item,), daemon=True, name="outbox-hash").start()
+        self._enqueue_hash(item)
         return item
+
+    def add_folder(self, session_id: str, folder: Path) -> list[OutboxItem]:
+        """Queue every regular file below ``folder`` (symlinks are never followed or sent)."""
+        root = Path(folder).resolve()
+        if not root.is_dir():
+            raise ApiError(400, "not_a_folder", "Not a folder.")
+        found: list[tuple[Path, str]] = []
+        max_depth = self._limits.max_dir_depth
+        for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+            rel = Path(dirpath).relative_to(root)
+            if len(rel.parts) + 1 >= max_depth:  # +1 for the folder's own name
+                dirnames[:] = []
+            dirnames[:] = [d for d in dirnames if not (Path(dirpath) / d).is_symlink()]
+            for fn in filenames:
+                fp = Path(dirpath) / fn
+                if fp.is_symlink() or not fp.is_file():
+                    continue
+                found.append((fp, "/".join((root.name, *rel.parts))))
+                if len(found) > self._limits.max_outbox_items:
+                    raise ApiError(429, "outbox_full", "That folder has too many files.")
+        if not found:
+            raise ApiError(400, "empty_folder", "That folder has no files to send.")
+        group = new_id()
+        with self._lock:
+            self._check_capacity(len(found))
+            items = []
+            for fp, rel_dir in found:
+                try:
+                    size = fp.stat().st_size
+                except OSError:
+                    continue
+                it = OutboxItem(
+                    new_id(),
+                    session_id,
+                    "file",
+                    fp.name,
+                    size,
+                    path=fp.resolve(),
+                    dir=rel_dir,
+                    group=group,
+                )
+                self._items[it.item_id] = it
+                items.append(it)
+        for it in items:
+            self._emit(it)
+            self._enqueue_hash(it)
+        return items
+
+    def _enqueue_hash(self, item: OutboxItem) -> None:
+        """One worker hashes items in order, so a 5000-file folder doesn't spawn 5000 threads."""
+        with self._lock:
+            if self._worker is None or not self._worker.is_alive():
+                self._worker = threading.Thread(
+                    target=self._run_hashes, daemon=True, name="outbox-hash"
+                )
+                self._worker.start()
+        self._hash_q.put(item)
+
+    def _run_hashes(self) -> None:
+        while True:
+            try:
+                item = self._hash_q.get(timeout=5)
+            except queue.Empty:
+                return
+            if item is not None and item.state == PREPARING:
+                self._hash(item)
 
     def _hash(self, item: OutboxItem) -> None:
         try:

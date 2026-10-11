@@ -39,6 +39,8 @@ data class QueueItem(
     val error: String? = null,
     /** Transient status such as "Reconnecting…"; cleared when sending continues. */
     val note: String? = null,
+    /** Relative folder on the receiver, e.g. "Trip/day1"; null for loose files. */
+    val dir: String? = null,
 ) {
     /** Only meaningful when the size is actually known. */
     val progress: Float? get() = if (size != null && size > 0) (sent.toFloat() / size).coerceIn(0f, 1f) else null
@@ -79,11 +81,16 @@ class TransferEngine(
     private val remoteIds = HashMap<String, String>()
 
     /** Queue files. Duplicate in-flight references are ignored to prevent accidental double sends. */
-    fun enqueue(gateway: ReceiverGateway, receiverName: String, refs: List<String>): String? {
+    fun enqueue(
+        gateway: ReceiverGateway,
+        receiverName: String,
+        refs: List<String>,
+        dirs: Map<String, String> = emptyMap(),
+    ): String? {
         val inFlight = _batches.value.filter { it.active }.flatMap { it.items }.map { it.ref }.toSet()
         val fresh = refs.distinct().filter { it !in inFlight }
         if (fresh.isEmpty()) return null
-        val items = fresh.map { QueueItem(UUID.randomUUID().toString(), it, it.substringAfterLast('/'), null) }
+        val items = fresh.map { QueueItem(UUID.randomUUID().toString(), it, it.substringAfterLast('/'), null, dir = dirs[it]) }
         val batch = Batch(UUID.randomUUID().toString(), receiverName, items)
         _batches.update { listOf(batch) + it }
         publishActive()
@@ -147,7 +154,7 @@ class TransferEngine(
 
         // 2. Declare the transfer. Nothing is sent until the person approves it on the computer.
         val remote = try {
-            gateway.createTransfer(readable.map { FileSpec(it.name, it.size) })
+            gateway.createTransfer(readable.map { FileSpec(it.name, it.size, it.dir) })
         } catch (e: ReceiverException) {
             readable.forEach { finishItem(id, it.id, ItemState.FAILED, e.message) }
             return finish(id, e.message)

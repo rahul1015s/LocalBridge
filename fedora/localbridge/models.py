@@ -18,7 +18,8 @@ class Limits:
 
     max_file_size: int = 64 * 1024**3  # 64 GiB per file
     max_transfer_size: int = 256 * 1024**3  # aggregate per transfer
-    max_files_per_transfer: int = 1000
+    max_files_per_transfer: int = 10_000
+    max_dir_depth: int = 16
     max_filename_bytes: int = 255
     max_active_transfers: int = 2  # transfers receiving content at once
     max_pending_transfers: int = 8  # awaiting approval per session
@@ -31,14 +32,14 @@ class Limits:
     approval_timeout_seconds: int = 180
     pair_fail_limit: int = 5
     pair_fail_window_seconds: int = 60
-    max_json_body: int = 1024 * 1024  # 1 MiB metadata
+    max_json_body: int = 4 * 1024 * 1024  # 4 MiB metadata (a 10k-file folder fits)
     min_free_space_margin: int = 64 * 1024**2  # keep 64 MiB free after write
     write_chunk: int = 1024 * 1024
     resume_window_seconds: int = 900  # how long an interrupted upload may be resumed
     takeover_idle_seconds: int = 8  # a silent stream older than this may be superseded
     max_message_bytes: int = 64 * 1024
     max_messages: int = 100
-    max_outbox_items: int = 50
+    max_outbox_items: int = 5000
 
 
 class TransferState(enum.StrEnum):
@@ -96,6 +97,8 @@ class FileSpec(_Strict):
     name: str = Field(min_length=1, max_length=1024)
     size: int | None = Field(default=None, ge=0)
     mime: str | None = Field(default=None, max_length=127)
+    # Relative folder the file belongs to, '/'-separated (e.g. 'Trip/day1'). Validated strictly.
+    dir: str | None = Field(default=None, max_length=1024)
 
 
 class TransferRequest(_Strict):

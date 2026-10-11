@@ -29,7 +29,7 @@ private class MemSink : FileSink {
     var committed = false
     var aborted = false
     var created = 0
-    override fun create(displayName: String): FileSink.Target {
+    override fun create(displayName: String, dir: List<String>): FileSink.Target {
         created++
         return object : FileSink.Target {
             override val stream: OutputStream = out
