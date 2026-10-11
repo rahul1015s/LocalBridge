@@ -1,0 +1,78 @@
+# Machine-readable summary of docs/protocol.md (protocol v1). The server itself does NOT expose
+# /openapi.json or /docs: those endpoints are disabled on purpose.
+openapi: 3.0.3
+info: { title: LocalBridge receiver, version: "1" }
+servers: [{ url: "https://{host}:{port}", variables: { host: { default: 192.168.43.2 }, port: { default: "40000" } } }]
+components:
+  securitySchemes:
+    session: { type: http, scheme: bearer, description: "Token returned by /v1/pair" }
+  schemas:
+    Error:
+      type: object
+      properties: { error: { type: object, properties: { code: { type: string }, message: { type: string } } } }
+    FileSpec:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties: { name: { type: string, maxLength: 1024 }, size: { type: integer, minimum: 0, nullable: true }, mime: { type: string, maxLength: 127 } }
+    Transfer:
+      type: object
+      properties:
+        transfer_id: { type: string }
+        state: { type: string, enum: [CREATED, AWAITING_APPROVAL, APPROVED, TRANSFERRING, VERIFYING, COMPLETED, REJECTED, CANCELLED, FAILED, EXPIRED] }
+        reason: { type: string, nullable: true }
+        files:
+          type: array
+          items:
+            type: object
+            properties:
+              file_id: { type: string }
+              name: { type: string }
+              size: { type: integer, nullable: true }
+              state: { type: string, enum: [PENDING, RECEIVING, VERIFYING, DONE, FAILED, CANCELLED] }
+              received: { type: integer }
+              sha256: { type: string, nullable: true }
+              error: { type: string, nullable: true }
+paths:
+  /v1/health:
+    get: { security: [], responses: { "200": { description: ok } } }
+  /v1/pair:
+    post:
+      security: []
+      description: Blocks until the person confirms on the receiver (<= 60 s).
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [protocol, session_id, secret, device_name]
+              properties:
+                protocol: { type: integer, enum: [1] }
+                session_id: { type: string, pattern: "^[A-Za-z0-9_-]{8,64}$" }
+                secret: { type: string, minLength: 16, maxLength: 128 }
+                device_name: { type: string, minLength: 1, maxLength: 64 }
+      responses: { "200": { description: paired }, "401": { description: invalid/expired/used }, "403": { description: denied }, "429": { description: rate limited } }
+  /v1/transfers:
+    post:
+      security: [{ session: [] }]
+      requestBody:
+        content: { application/json: { schema: { type: object, additionalProperties: false, required: [files], properties: { files: { type: array, minItems: 1, items: { $ref: "#/components/schemas/FileSpec" } } } } } }
+      responses: { "201": { description: created, content: { application/json: { schema: { $ref: "#/components/schemas/Transfer" } } } } }
+  /v1/transfers/{transfer_id}:
+    get: { security: [{ session: [] }], parameters: [{ name: transfer_id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: transfer } } }
+  /v1/transfers/{transfer_id}/cancel:
+    post: { security: [{ session: [] }], parameters: [{ name: transfer_id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: cancelled } } }
+  /v1/transfers/{transfer_id}/files/{file_id}/content:
+    put:
+      security: [{ session: [] }]
+      description: Raw bytes. Refused with 409 not_approved until the receiver approves.
+      parameters: [{ name: transfer_id, in: path, required: true, schema: { type: string } }, { name: file_id, in: path, required: true, schema: { type: string } }]
+      requestBody: { content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+      responses: { "200": { description: "{received, sha256}" } }
+  /v1/transfers/{transfer_id}/files/{file_id}/finalize:
+    post:
+      security: [{ session: [] }]
+      parameters: [{ name: transfer_id, in: path, required: true, schema: { type: string } }, { name: file_id, in: path, required: true, schema: { type: string } }]
+      requestBody: { content: { application/json: { schema: { type: object, additionalProperties: false, required: [sha256, size], properties: { sha256: { type: string, pattern: "^[0-9a-f]{64}$" }, size: { type: integer, minimum: 0 } } } } } }
+      responses: { "200": { description: saved }, "422": { description: integrity_failed } }

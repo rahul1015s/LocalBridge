@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=LocalBridge
+Comment=Send files between your phone and this computer, privately
+Exec=localbridge
+Icon=network-wireless-symbolic
+Terminal=false
+Categories=Network;FileTransfer;
+StartupNotify=true

@@ -165,7 +165,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.pair_card.add_css_class("card")
         self.pair_card.add_css_class("lb-card")
         self.qr_pic = Gtk.Picture(
-            content_fit=Gtk.ContentFit.CONTAIN, can_shrink=True, halign=Gtk.Align.CENTER, hexpand=False, vexpand=False
+            content_fit=Gtk.ContentFit.CONTAIN,
+            can_shrink=True,
+            halign=Gtk.Align.CENTER,
+            hexpand=False,
+            vexpand=False,
         )
         self.qr_pic.set_size_request(240, 240)
         self.qr_pic.add_css_class("lb-qr")
@@ -177,7 +181,10 @@ class MainWindow(Adw.ApplicationWindow):
         self.fp_label.add_css_class("caption")
         self.new_code_btn = Gtk.Button(label="New pairing code", halign=Gtk.Align.CENTER)
         self.new_code_btn.connect("clicked", lambda *_: self._new_code())
-        for w in (self.qr_pic, self.qr_info, self.fp_label, self.new_code_btn):
+        self.copy_btn = Gtk.Button(label="Copy pairing link", halign=Gtk.Align.CENTER)
+        self.copy_btn.add_css_class("flat")
+        self.copy_btn.connect("clicked", self._copy_link)
+        for w in (self.qr_pic, self.qr_info, self.fp_label, self.copy_btn, self.new_code_btn):
             self.pair_card.append(w)
         page.append(self.pair_card)
 
@@ -352,7 +359,15 @@ class MainWindow(Adw.ApplicationWindow):
             "Fingerprint " + " ".join(fp[i : i + 4] for i in range(0, 24, 4)) + " …"
         )
         self.new_code_btn.set_visible(False)
+        self.copy_btn.set_visible(True)
         _ = offer
+
+    def _copy_link(self, *_):
+        offer = self.service and self.service.core.pairing.current_offer()
+        if not offer:
+            return
+        self.get_clipboard().set(self.service.pairing_uri())
+        self._toast("Pairing link copied. It is as private as the QR code.")
 
     def _tick(self) -> bool:
         if self.running:
@@ -364,6 +379,7 @@ class MainWindow(Adw.ApplicationWindow):
                 )
             else:
                 self.qr_pic.set_visible(False)
+                self.copy_btn.set_visible(False)
                 self.fp_label.set_text("")
                 self.qr_info.set_text("Pairing code expired or already used.")
                 self.new_code_btn.set_visible(True)

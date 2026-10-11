@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cleartext is refused everywhere. TLS trust for the receiver comes from fingerprint pinning
+     done in code (PinnedTls); the system CA store is never used to trust the receiver. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>
