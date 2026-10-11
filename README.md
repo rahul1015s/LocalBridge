@@ -8,6 +8,18 @@ computer, directly over your own Wi-Fi or phone hotspot. No cloud, no account, n
 > run on a phone**, and **mobile-hotspot behaviour is untested**. See [docs/testing.md](docs/testing.md).
 > The project has not been independently security-audited.
 
+## Free and open source
+
+LocalBridge is **free software** under the [GNU GPL v3 or later](LICENSE). In plain words:
+
+* **Free to use** for anyone, personal or commercial, with no cost, no account, no ads, no tracking.
+* **Free to study and modify**: the full source is here; change it however you like.
+* **Free to share**: give copies to others, or publish your modified version, as long as you keep it under
+  the same GPL license and make the source available. That keeps every version free for its users too.
+* **No warranty**: it comes as is. See [docs/license.md](docs/license.md) for the short explanation.
+
+Contributions are welcome via pull requests; by contributing you agree your work is released under the same license.
+
 ## How it works
 
 1. On Fedora press **Start receiving** → a QR code appears (valid 2 minutes, single use).
@@ -99,5 +111,5 @@ private vulnerability reporting before publishing) rather than in a public issue
 
 ## License
 
-GPL-3.0-or-later ([LICENSE](LICENSE)). Check name/trademark availability for "LocalBridge" before any
+GPL-3.0-or-later ([LICENSE](LICENSE), summary in [docs/license.md](docs/license.md)). Check name/trademark availability for "LocalBridge" before any
 public release.

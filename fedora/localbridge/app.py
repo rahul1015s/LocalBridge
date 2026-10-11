@@ -45,7 +45,7 @@ class LocalBridgeApp(Adw.Application):
             application_name="LocalBridge",
             application_icon="io.github.localbridge.LocalBridge",
             version=__version__,
-            comments="Private file transfer between your phone and this computer. No cloud, no account.",
+            comments="Private file transfer between your phone and this computer. Free software: use, modify and share it under the GPL. No cloud, no account, no ads.",
             license_type=__import__("gi.repository.Gtk", fromlist=["License"]).License.GPL_3_0,
         ).present(self.props.active_window)
 

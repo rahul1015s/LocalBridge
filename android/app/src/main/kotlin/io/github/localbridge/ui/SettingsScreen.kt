@@ -110,11 +110,11 @@ fun SettingsScreen(vm: AppViewModel) {
             SurfaceCard {
                 Text("About", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(6.dp))
-                Text("LocalBridge $version · open source (GPL-3.0)", style = MaterialTheme.typography.bodyMedium)
+                Text("LocalBridge $version · free and open source (GPL-3.0)", style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(4.dp))
                 Text(
                     "Files go straight from this phone to your computer, encrypted with TLS and checked with SHA-256. " +
-                        "No account, no cloud, no analytics. Pairing is verified with the code on your computer's screen; " +
+                        "Free to use, modify and share under the GPL — no account, no cloud, no ads, no analytics. Pairing is verified with the code on your computer's screen; " +
                         "this app has not been independently security audited.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
