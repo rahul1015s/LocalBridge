@@ -17,7 +17,7 @@ class FakeClock:
         return self.t
 
 
-# ---- security ---------------------------------------------------------------------
+# ---- security ----
 def test_tokens_are_unique_and_long():
     toks = {new_token() for _ in range(200)}
     assert len(toks) == 200
@@ -48,7 +48,7 @@ def test_failure_limiter_is_bounded():
     assert len(lim._fails) <= 5
 
 
-# ---- pairing ------------------------------------------------------------------------
+# ---- pairing ----
 def make_pm(clk=None):
     return PairingManager(Limits(), clock=clk or FakeClock())
 
@@ -136,7 +136,7 @@ def test_bounded_pending_pairings():
     assert e.value.status == 429
 
 
-# ---- filenames ------------------------------------------------------------------------
+# ---- filenames ----
 @pytest.mark.parametrize(
     "raw,expected",
     [
@@ -163,7 +163,7 @@ def test_sanitize_long_name_keeps_extension_and_limit():
     assert n.endswith(".mp4") and len(n.encode()) <= 255
 
 
-# ---- storage --------------------------------------------------------------------------------
+# ---- storage ----
 def test_finalize_never_overwrites(tmp_path):
     d = Destination(tmp_path)
     (tmp_path / "a.txt").write_text("keep")
@@ -221,7 +221,7 @@ def test_space_check_and_missing_destination(tmp_path):
         Destination(tmp_path / "nope").validate()
 
 
-# ---- transfer state machine ----------------------------------------------------------------------
+# ---- transfer state machine ----
 def make_tm(**kw):
     clk = FakeClock()
     return TransferManager(Limits(**kw), clock=clk), clk

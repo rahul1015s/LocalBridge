@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">LocalBridge</string>
+    <string name="channel_transfers">File transfers</string>
+</resources>

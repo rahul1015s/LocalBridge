@@ -39,7 +39,7 @@ def approve(h, t):
     h.svc.core.transfers.approve(t["transfer_id"])
 
 
-# ---- TLS / pairing ----------------------------------------------------------------------
+# ---- TLS / pairing ----
 def test_health_is_minimal(h):
     st, data = h.client().request("GET", "/v1/health", token=None)
     assert st == 200 and set(data) == {"status", "protocol"}
@@ -121,7 +121,7 @@ def test_error_responses_do_not_echo_input(h):
     assert st == 422 and "SENSITIVE" not in str(data)
 
 
-# ---- authn / authz -----------------------------------------------------------------------------
+# ---- authn / authz ----
 @pytest.mark.parametrize(
     "method,path",
     [
@@ -168,7 +168,7 @@ def test_sender_cannot_approve_remotely(h):
     assert c.request("GET", f"/v1/transfers/{t['transfer_id']}")[1]["state"] == "AWAITING_APPROVAL"
 
 
-# ---- transfers ---------------------------------------------------------------------------------
+# ---- transfers ----
 def test_content_before_approval_is_refused_and_writes_nothing(h):
     c = h.pair()
     t = h.new_transfer(c, [{"name": "a.txt", "size": 5}])
@@ -433,7 +433,7 @@ def test_unwritable_destination_reports_error(h):
     assert st == 507
 
 
-# ---- shutdown --------------------------------------------------------------------------------------
+# ---- shutdown ----
 def test_receiver_stops_listening_and_cleans_up(tmp_path):
     hh = make_harness(tmp_path)
     port = hh.svc.port
