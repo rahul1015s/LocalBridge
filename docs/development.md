@@ -40,7 +40,7 @@ Legend: [x] done with test evidence · [~] implemented, not verified on target h
 - [ ] Multi-GB tests on real storage; throughput on real Wi-Fi
 
 ### Phase 3 — Android UX
-- [~] Home, Pair, Transfers, History, Settings screens; share-sheet intake; foreground service
+- [~] Home, Pair, Send (in-app picker + review), Transfers, History, Settings screens; share-sheet intake; foreground service
 - [ ] Instrumentation / ViewModel tests; accessibility pass with TalkBack; tablet layout
 
 ### Phase 4 — Fedora UX

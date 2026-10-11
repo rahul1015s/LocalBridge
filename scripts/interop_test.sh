@@ -13,7 +13,7 @@ for _ in $(seq 50); do [ -s "$WORK/uri" ] && break; sleep 0.1; done
 [ -s "$WORK/uri" ] || { echo "receiver failed to start"; exit 1; }
 
 cd "$ROOT/android"
-LB_PAIRING_URI="$(cat "$WORK/uri")" LB_TEST_FILE="$WORK/test.bin" \
+LB_URI_FILE="$WORK/uri" LB_TEST_FILE="$WORK/test.bin" \
   ./gradlew testDebugUnitTest --tests '*InteropTest*' -q
 
 cmp "$WORK/test.bin" "$WORK/inbox/interop-ü.bin" && echo "OK: received file is byte-identical"

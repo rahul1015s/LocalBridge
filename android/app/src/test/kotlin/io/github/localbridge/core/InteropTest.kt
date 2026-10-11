@@ -16,7 +16,8 @@ import org.junit.Test
  * NOTE: loopback proves protocol/pinning interoperability, NOT hotspot behaviour.
  */
 class InteropTest {
-    private val uri = System.getenv("LB_PAIRING_URI")
+    private val uriFile = System.getenv("LB_URI_FILE")
+    private val uri get() = uriFile?.let { File(it).readText() }
     private val testFile = System.getenv("LB_TEST_FILE")
 
     private fun sha(f: File): String {
@@ -26,7 +27,7 @@ class InteropTest {
     }
 
     @Test fun pairsUploadsAndVerifiesAgainstRealReceiver() = runBlocking {
-        assumeTrue("interop env not set", uri != null && testFile != null)
+        assumeTrue("interop env not set", uriFile != null && testFile != null)
         val info = PairingInfo.parse(uri!!).getOrThrow()
         var verified = false
         val (gw, name) = HttpReceiver.pair(info, "JUnit Phone") { verified = true }
@@ -49,8 +50,19 @@ class InteropTest {
         assertEquals("COMPLETED", done.state)
     }
 
+    @Test fun sendingWorksAfterAPauseLikeARealPersonPickingFiles() = runBlocking {
+        assumeTrue("interop env not set", uriFile != null)
+        val info = PairingInfo.parse(uri!!).getOrThrow()
+        val (gw, _) = HttpReceiver.pair(info, "Slow Phone") {}
+        Thread.sleep(8000) // longer than the receiver's idle keep-alive
+        val t = gw.createTransfer(listOf(FileSpec("late.bin", 3)))
+        Thread.sleep(8000)
+        val up = gw.upload(t.transferId, t.files[0].fileId, 3, { "abc".byteInputStream() }) {}
+        assertEquals("COMPLETED", gw.finalize(t.transferId, t.files[0].fileId, up.sha256, up.bytes).state)
+    }
+
     @Test fun wrongFingerprintFailsClosed() = runBlocking {
-        assumeTrue("interop env not set", uri != null)
+        assumeTrue("interop env not set", uriFile != null)
         val real = PairingInfo.parse(uri!!).getOrThrow()
         val forged = PairingInfo(real.host, real.port, real.sessionId, "0".repeat(64), real.secret)
         try {

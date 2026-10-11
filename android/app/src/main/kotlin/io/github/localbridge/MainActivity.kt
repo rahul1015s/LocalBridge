@@ -24,6 +24,7 @@ import io.github.localbridge.ui.HomeScreen
 import io.github.localbridge.ui.LocalBridgeTheme
 import io.github.localbridge.ui.PairScreen
 import io.github.localbridge.ui.Screen
+import io.github.localbridge.ui.SendScreen
 import io.github.localbridge.ui.SettingsScreen
 import io.github.localbridge.ui.TransfersScreen
 
@@ -49,6 +50,7 @@ class MainActivity : ComponentActivity() {
                     when (stack.last()) {
                         Screen.HOME -> HomeScreen(vm)
                         Screen.PAIR -> PairScreen(vm)
+                        Screen.SEND -> SendScreen(vm)
                         Screen.TRANSFERS -> TransfersScreen(vm)
                         Screen.HISTORY -> HistoryScreen(vm)
                         Screen.SETTINGS -> SettingsScreen(vm)
@@ -71,7 +73,7 @@ class MainActivity : ComponentActivity() {
             Intent.ACTION_SEND_MULTIPLE -> streamListExtra(i)
             else -> return
         }
-        if (uris.isNotEmpty()) vm.send(uris.map { it.toString() })
+        if (uris.isNotEmpty()) vm.stage(uris.map { it.toString() })
     }
 
     @Suppress("DEPRECATION")

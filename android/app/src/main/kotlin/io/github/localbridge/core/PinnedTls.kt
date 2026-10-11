@@ -64,7 +64,10 @@ object PinnedTls {
             .protocols(listOf(Protocol.HTTP_1_1))
             .followRedirects(false)
             .followSslRedirects(false)
-            .retryOnConnectionFailure(false)
+            // Retry transparently when a pooled connection was closed by the peer while idle, and
+            // never keep idle connections longer than the receiver would.
+            .retryOnConnectionFailure(true)
+            .connectionPool(okhttp3.ConnectionPool(2, 3, TimeUnit.SECONDS))
             .connectTimeout(8, TimeUnit.SECONDS)
             .readTimeout(0, TimeUnit.SECONDS) // per-call timeouts are set where needed
             .writeTimeout(60, TimeUnit.SECONDS)

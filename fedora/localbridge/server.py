@@ -310,7 +310,7 @@ class ReceiverService:
             access_log=False,
             server_header=False,
             date_header=False,
-            timeout_keep_alive=5,
+            timeout_keep_alive=60,
             limit_concurrency=64,
             ws="none",
             lifespan="off",

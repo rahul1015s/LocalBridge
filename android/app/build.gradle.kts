@@ -58,5 +58,5 @@ dependencies {
 
 // Interop tests read these from the environment; declare them so Gradle re-runs when they change.
 tasks.withType<Test>().configureEach {
-    inputs.property("lbInterop", providers.environmentVariable("LB_PAIRING_URI").orElse(""))
+    inputs.property("lbInterop", providers.environmentVariable("LB_URI_FILE").orElse(""))
 }

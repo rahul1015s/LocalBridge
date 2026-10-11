@@ -19,9 +19,14 @@ def main(host: str, dest: str, uri_out: str) -> None:
     Path(dest).mkdir(parents=True, exist_ok=True)
     svc = ReceiverService(ReceiverConfig(host, 0, Path(dest), "Interop Receiver"))
     core = svc.core
-    core.pairing.subscribe(
-        lambda e, p: core.pairing.decide(p.pairing_id, True) if e == "pairing_requested" else None
-    )
+
+    def on_pair(event, p):
+        if event == "pairing_requested":
+            core.pairing.decide(p.pairing_id, True)
+            # Codes are single-use: publish a fresh one for the next test.
+            Path(uri_out).write_text(svc.pairing_uri())
+
+    core.pairing.subscribe(on_pair)
 
     def on_transfer(t):
         if t.state == TransferState.AWAITING_APPROVAL:

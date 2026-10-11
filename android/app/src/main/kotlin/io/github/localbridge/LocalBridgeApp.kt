@@ -30,9 +30,10 @@ class AppContainer(private val app: Application) {
     private val _session = MutableStateFlow<Session?>(null)
     val session: StateFlow<Session?> = _session.asStateFlow()
 
+    val files = ContentResolverFileAccess(app.contentResolver)
     val engine = TransferEngine(
         scope = scope,
-        files = ContentResolverFileAccess(app.contentResolver),
+        files = files,
         listener = { item, receiver ->
             if (settings.state.value.keepHistory) {
                 history.add(

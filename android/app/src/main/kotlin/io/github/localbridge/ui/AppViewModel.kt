@@ -15,7 +15,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-enum class Screen { HOME, PAIR, TRANSFERS, HISTORY, SETTINGS }
+enum class Screen { HOME, PAIR, SEND, TRANSFERS, HISTORY, SETTINGS }
+
+data class Picked(val ref: String, val name: String, val size: Long?, val readable: Boolean)
 
 sealed interface PairState {
     data object Idle : PairState
@@ -37,6 +39,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _pair = MutableStateFlow<PairState>(PairState.Idle)
     val pair: StateFlow<PairState> = _pair.asStateFlow()
+
+    private val _selection = MutableStateFlow<List<Picked>>(emptyList())
+    val selection: StateFlow<List<Picked>> = _selection.asStateFlow()
 
     /** Files shared into the app from another app, waiting for a connection. */
     private var pendingShare: List<String> = emptyList()
@@ -67,7 +72,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (pendingShare.isNotEmpty()) {
                     val files = pendingShare
                     pendingShare = emptyList()
-                    send(files)
+                    stage(files)
                 }
             } catch (e: ReceiverException) {
                 _pair.value = PairState.Failed(e.message, e.kind)
@@ -86,15 +91,40 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun disconnect() = container.setSession(null)
 
-    fun send(refs: List<String>) {
-        val s = session.value
-        if (s == null) {
-            pendingShare = refs
+    /** Adds files to the selection (deduplicated) and opens the review screen. */
+    fun stage(refs: List<String>) {
+        if (session.value == null) {
+            pendingShare = pendingShare + refs
             navigate(Screen.PAIR)
             return
         }
+        addToSelection(refs)
+        navigate(Screen.SEND)
+    }
+
+    fun addToSelection(refs: List<String>) {
+        val have = _selection.value.map { it.ref }.toSet()
+        val fresh = refs.distinct().filter { it !in have }
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val picked = fresh.map { r ->
+                runCatching { container.files.describe(r) }
+                    .map { Picked(r, it.name, it.size, true) }
+                    .getOrElse { Picked(r, r.substringAfterLast('/'), null, false) }
+            }
+            _selection.update { it + picked }
+        }
+    }
+
+    fun removeFromSelection(ref: String) = _selection.update { l -> l.filter { it.ref != ref } }
+    fun clearSelection() { _selection.value = emptyList() }
+
+    fun sendSelection() {
+        val s = session.value ?: return navigate(Screen.PAIR)
+        val refs = _selection.value.filter { it.readable }.map { it.ref }
+        if (refs.isEmpty()) return
         engine.enqueue(s.gateway, s.receiverName, refs)
-        navigate(Screen.TRANSFERS)
+        clearSelection()
+        _stack.update { it.filter { sc -> sc != Screen.SEND } + Screen.TRANSFERS }
     }
 
     fun retry(batchId: String) {
