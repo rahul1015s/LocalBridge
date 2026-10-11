@@ -51,7 +51,11 @@ object PinnedTls {
         fun onVerified()
     }
 
-    fun client(fingerprintHex: String, onVerified: HandshakeListener? = null): OkHttpClient {
+    fun client(
+        fingerprintHex: String,
+        socketFactory: javax.net.SocketFactory? = null,
+        onVerified: HandshakeListener? = null,
+    ): OkHttpClient {
         val tm = PinnedTrustManager(fingerprintHex)
         val ctx = SSLContext.getInstance("TLS")
         ctx.init(null, arrayOf(tm), null)
@@ -59,6 +63,7 @@ object PinnedTls {
             .tlsVersions(TlsVersion.TLS_1_3, TlsVersion.TLS_1_2)
             .build()
         return OkHttpClient.Builder()
+            .apply { if (socketFactory != null) socketFactory(socketFactory) }
             .sslSocketFactory(ctx.socketFactory, tm)
             .connectionSpecs(listOf(spec)) // no cleartext fallback
             .protocols(listOf(Protocol.HTTP_1_1))

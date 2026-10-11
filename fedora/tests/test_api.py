@@ -375,13 +375,12 @@ def test_interrupted_upload_is_not_a_completed_file(h):
     state = None
     while time.time() < deadline:
         state = c.request("GET", f"/v1/transfers/{t['transfer_id']}")[1]["files"][0]["state"]
-        if state == "FAILED":
+        if state == "INTERRUPTED":
             break
         time.sleep(0.1)
-    assert state == "FAILED"
+    assert state == "INTERRUPTED"  # resumable, but never a finished file
     assert not (h.dest / "cut.bin").exists()
-    part = h.dest / ".localbridge-partial"
-    assert not part.exists() or not any(part.iterdir())
+    assert c.request("GET", f"/v1/transfers/{t['transfer_id']}")[1]["state"] == "TRANSFERRING"
 
 
 def test_file_size_limit_enforced_at_stream_time(tmp_path):

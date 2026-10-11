@@ -26,15 +26,21 @@ computer, directly over your own Wi-Fi or phone hotspot. No cloud, no account, n
 * Explicit per-transfer approval; cancel from either side; interrupted files never look complete
 * Honest progress (no percentage when size is unknown), speed and ETA only when measurable
 * Safe storage: sanitised names, no overwrite (`name (1).ext`), 0600 partial files, free-space checks
+* **Resumable transfers**: a dropped connection continues from where it stopped; several files at once
+* **Computer → phone**: choose or drag-and-drop files onto the desktop window; the phone accepts first
+* **Text and links** both ways (never opened automatically)
+* **Local only**: files go over your Wi-Fi/hotspot, sockets are bound to that network, never mobile data;
+  bytes are sent exactly as stored (no recompression)
+* Desktop notifications and an *Open folder* button
 * Native GTK4/Libadwaita desktop app; Jetpack Compose/Material 3 Android app (teal, light/dark)
 * Receiver binds one chosen interface on an ephemeral port and stops listening when you press Stop
 
-Not yet: resumable transfers, saved/trusted devices (each session is re-paired), IPv6, discovery
-without QR, desktop notifications.
+Not yet: saved/trusted devices (each session is re-paired), folder transfer, IPv6, discovery without QR,
+Windows/macOS receivers.
 
 ## Supported platforms
 
-Fedora 44 (developed and tested here). Android 8.0+ (minSdk 26, target 36; only built, not run).
+Fedora 44 (developed and tested here). Android 10+ (minSdk 29, target 36; only built, not run).
 
 ## Install & run (development)
 
@@ -55,8 +61,8 @@ ports; if you use a stricter zone and the phone can't connect, allow it yourself
 ## Tests
 
 ```bash
-cd fedora && .venv/bin/python -m pytest -q        # 77 tests
-cd android && ./gradlew testDebugUnitTest         # 28 tests (2 need the interop script)
+cd fedora && .venv/bin/python -m pytest -q        # 92 tests
+cd android && ./gradlew testDebugUnitTest         # 43 tests (3 need the interop script)
 ./scripts/interop_test.sh                         # Kotlin client <-> Python receiver, real TLS
 ```
 

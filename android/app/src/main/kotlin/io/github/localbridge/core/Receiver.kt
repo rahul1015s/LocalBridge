@@ -2,9 +2,12 @@ package io.github.localbridge.core
 
 import java.io.InputStream
 
-enum class FileStatus { PENDING, RECEIVING, VERIFYING, DONE, FAILED, CANCELLED }
+enum class FileStatus { PENDING, RECEIVING, VERIFYING, INTERRUPTED, DONE, FAILED, CANCELLED }
 
-data class RemoteFile(val fileId: String, val name: String, val size: Long?, val state: FileStatus)
+data class RemoteFile(val fileId: String, val name: String, val size: Long?, val state: FileStatus, val received: Long = 0)
+
+/** Something the computer wants to send to this phone. The person must accept it first. */
+data class OutboxEntry(val id: String, val kind: String, val name: String, val size: Long, val sha256: String?, val text: String?)
 
 data class RemoteTransfer(
     val transferId: String,
@@ -39,8 +42,16 @@ interface ReceiverGateway {
         transferId: String,
         fileId: String,
         declaredSize: Long?,
+        offset: Long,
         open: () -> InputStream,
         onProgress: (Long) -> Unit,
     ): UploadResult
     suspend fun finalize(transferId: String, fileId: String, sha256: String, size: Long): RemoteTransfer
+
+    suspend fun sendMessage(text: String)
+    suspend fun listOutbox(): List<OutboxEntry>
+
+    /** Streams the item from [offset] (HTTP Range); [onChunk] gets each piece as it arrives. */
+    suspend fun download(itemId: String, offset: Long, onChunk: (ByteArray, Int) -> Unit)
+    suspend fun outboxDone(itemId: String, status: String, detail: String?)
 }

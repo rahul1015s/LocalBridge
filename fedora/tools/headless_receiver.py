@@ -3,7 +3,7 @@
 The product never does this (approval is always an explicit user action). This exists solely so the
 cross-implementation interop test (Kotlin client <-> Python receiver) can run unattended.
 
-Usage: headless_receiver.py HOST DEST_DIR URI_OUT_FILE
+Usage: headless_receiver.py HOST DEST_DIR URI_OUT_FILE [FILE_TO_OFFER_TO_PHONES]
 """
 
 import signal
@@ -15,7 +15,7 @@ from localbridge.models import TransferState
 from localbridge.server import ReceiverConfig, ReceiverService
 
 
-def main(host: str, dest: str, uri_out: str) -> None:
+def main(host: str, dest: str, uri_out: str, offer: str | None = None) -> None:
     Path(dest).mkdir(parents=True, exist_ok=True)
     svc = ReceiverService(ReceiverConfig(host, 0, Path(dest), "Interop Receiver"))
     core = svc.core
@@ -26,7 +26,14 @@ def main(host: str, dest: str, uri_out: str) -> None:
             # Codes are single-use: publish a fresh one for the next test.
             Path(uri_out).write_text(svc.pairing_uri())
 
+    def on_session(event, session):
+        if event == "session_created" and offer:
+            core.outbox.add_file(session.session_id, Path(offer))
+            core.outbox.add_text(session.session_id, "hello from the laptop")
+
     core.pairing.subscribe(on_pair)
+    core.pairing.subscribe(on_session)
+    core.subscribe_messages(lambda m: Path(dest, "message.txt").write_text(m.text))
 
     def on_transfer(t):
         if t.state == TransferState.AWAITING_APPROVAL:
@@ -44,4 +51,4 @@ def main(host: str, dest: str, uri_out: str) -> None:
 
 
 if __name__ == "__main__":
-    main(*sys.argv[1:4])
+    main(*sys.argv[1:5])

@@ -10,6 +10,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -35,6 +37,8 @@ data class QueueItem(
     /** Bytes/second measured over a sliding window; null until enough data exists. */
     val speedBps: Long? = null,
     val error: String? = null,
+    /** Transient status such as "Reconnecting…"; cleared when sending continues. */
+    val note: String? = null,
 ) {
     /** Only meaningful when the size is actually known. */
     val progress: Float? get() = if (size != null && size > 0) (sent.toFloat() / size).coerceIn(0f, 1f) else null
@@ -62,6 +66,9 @@ class TransferEngine(
     private val nowMs: () -> Long = System::currentTimeMillis,
     private val pollIntervalMs: Long = 700,
     private val maxPollFailures: Int = 5,
+    private val parallel: () -> Int = { 3 },
+    private val maxResumeAttempts: Int = 40,
+    private val retryDelayMs: (Int) -> Long = { minOf(1500L * it, 10_000L) },
     private val listener: ItemListener? = null,
 ) {
     private val _batches = MutableStateFlow<List<Batch>>(emptyList())
@@ -177,42 +184,73 @@ class TransferEngine(
             return finish(id, msg)
         }
 
-        // 4. Send each file, streaming, hashing as we go.
+        // 4. Send files (several at once), streaming and hashing as we go. A dropped connection
+        //    resumes from the byte the receiver already holds instead of starting over.
         updateBatch(id) { it.copy(phase = Phase.SENDING, message = null) }
-        var abortReason: String? = null
-        for ((index, item) in readable.withIndex()) {
-            if (abortReason != null) {
-                finishItem(id, item.id, ItemState.FAILED, abortReason)
-                continue
-            }
-            updateItem(id, item.id) { it.copy(state = ItemState.SENDING, sent = 0) }
-            val rf = remote.files[index]
-            try {
-                val meter = SpeedMeter(nowMs)
-                var lastPublish = 0L
-                val up = gateway.upload(remote.transferId, rf.fileId, item.size, { files.open(item.ref) }) { sent ->
-                    val t = nowMs()
-                    if (t - lastPublish >= 100) {
-                        lastPublish = t
-                        val speed = meter.sample(sent)
-                        updateItem(id, item.id) { it.copy(sent = sent, speedBps = speed) }
-                    }
+        val abortReason = java.util.concurrent.atomic.AtomicReference<String?>(null)
+        val gate = kotlinx.coroutines.sync.Semaphore(parallel().coerceIn(1, 4))
+        coroutineScope {
+            readable.forEachIndexed { index, item ->
+                launch {
+                    gate.withPermit { sendOne(gateway, id, remote.transferId, remote.files[index], item, abortReason) }
                 }
-                updateItem(id, item.id) { it.copy(state = ItemState.VERIFYING, sent = up.bytes, size = it.size ?: up.bytes) }
-                gateway.finalize(remote.transferId, rf.fileId, up.sha256, up.bytes)
-                updateItem(id, item.id) { it.copy(sent = up.bytes) }
-                finishItem(id, item.id, ItemState.DONE)
-            } catch (e: ReceiverException) {
-                finishItem(id, item.id, ItemState.FAILED, e.message)
-                if (e.kind in setOf(Kind.UNREACHABLE, Kind.TIMEOUT, Kind.UNAUTHORIZED, Kind.CERT_MISMATCH, Kind.STORAGE)) {
-                    abortReason = e.message
-                }
-            } catch (e: IOException) {
-                // Local read failure (file vanished mid-send, permission revoked).
-                finishItem(id, item.id, ItemState.FAILED, "Couldn't read this file while sending.")
             }
         }
         finish(id, null)
+    }
+
+    private suspend fun sendOne(
+        gateway: ReceiverGateway,
+        id: String,
+        transferId: String,
+        rf: io.github.localbridge.core.RemoteFile,
+        item: QueueItem,
+        abortReason: java.util.concurrent.atomic.AtomicReference<String?>,
+    ) {
+        abortReason.get()?.let { return finishItem(id, item.id, ItemState.FAILED, it) }
+        updateItem(id, item.id) { it.copy(state = ItemState.SENDING, sent = 0) }
+        val meter = SpeedMeter(nowMs)
+        var lastPublish = 0L
+        var offset = 0L
+        var attempt = 0
+        try {
+            while (true) {
+                try {
+                    val up = gateway.upload(transferId, rf.fileId, item.size, offset, { files.open(item.ref) }) { sent ->
+                        val t = nowMs()
+                        if (t - lastPublish >= 100) {
+                            lastPublish = t
+                            val speed = meter.sample(sent)
+                            updateItem(id, item.id) { it.copy(sent = sent, speedBps = speed, note = null) }
+                        }
+                    }
+                    updateItem(id, item.id) { it.copy(state = ItemState.VERIFYING, sent = up.bytes, size = it.size ?: up.bytes, note = null) }
+                    gateway.finalize(transferId, rf.fileId, up.sha256, up.bytes)
+                    updateItem(id, item.id) { it.copy(sent = up.bytes) }
+                    return finishItem(id, item.id, ItemState.DONE)
+                } catch (e: ReceiverException) {
+                    val resumable = e.kind == Kind.UNREACHABLE || e.kind == Kind.TIMEOUT ||
+                        e.code == "offset_mismatch" || e.code == "file_state"
+                    if (!resumable || ++attempt > maxResumeAttempts) throw e
+                    updateItem(id, item.id) { it.copy(note = "Connection lost — reconnecting ($attempt)…", speedBps = null) }
+                    delay(retryDelayMs(attempt))
+                    // Ask the receiver how much it really has; keep waiting while the network is down.
+                    offset = try {
+                        gateway.getTransfer(transferId).files.firstOrNull { it.fileId == rf.fileId }?.received ?: offset
+                    } catch (_: ReceiverException) {
+                        offset
+                    }
+                }
+            }
+        } catch (e: ReceiverException) {
+            finishItem(id, item.id, ItemState.FAILED, e.message)
+            if (e.kind in setOf(Kind.UNREACHABLE, Kind.TIMEOUT, Kind.UNAUTHORIZED, Kind.CERT_MISMATCH, Kind.STORAGE)) {
+                abortReason.compareAndSet(null, e.message)
+            }
+        } catch (e: IOException) {
+            // Local read failure (file vanished mid-send, permission revoked).
+            finishItem(id, item.id, ItemState.FAILED, "Couldn't read this file while sending.")
+        }
     }
 
     private fun finish(id: String, message: String?) =

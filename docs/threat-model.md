@@ -40,6 +40,10 @@ Out of scope: malware on either device, a compromised OS or Android/GTK stack, p
 | D: huge/lying sizes, slow disk fill | Declared + streamed size limits, free-space check, `ENOSPC` handling, bounded chunks (1 MiB), bounded concurrency | `test_file_size_limit_enforced_at_stream_time`, `test_insufficient_disk_space_refused` |
 | D: corrupted/truncated upload | Receiver hashes bytes written; sender-supplied digest must match; partial discarded otherwise | `test_wrong_hash_fails...`, `test_interrupted_upload...` |
 | D: oversized JSON | 1 MiB cap, strict models (`extra=forbid`), errors never echo input | `test_oversized_metadata_rejected`, `test_error_responses_do_not_echo_input` |
+| Phone->computer link/text abuse | Text is displayed only; links open only on an explicit click; size capped at 64 KiB | `test_message_*` |
+| Outbox abuse (fetching others' files / arbitrary paths) | Items bound to a session; ids unguessable; paths never sent to the phone; file change detection; phone must accept | `test_outbox_*` |
+| Resume abuse (splicing data) | Offset must equal the bytes held; final SHA-256 covers the whole file | `test_wrong_offset_*`, interop resume test |
+| Mobile-data use / leakage off the LAN | Only private IPv4 targets accepted; sockets bound to the Wi-Fi network when the receiver is on it | `PairingInfoTest`; binding is **not** unit-testable (see testing.md) |
 | Receiver left running | Explicit Start/Stop; stop closes the socket, revokes sessions, wipes partials and the TLS dir | `test_receiver_stops_listening_and_cleans_up` |
 | Secrets in logs | Access log disabled; secrets never logged; tokens kept as SHA-256 | review |
 | Browser-origin attacks | No CORS headers, no cookies, bearer tokens, no docs/openapi endpoints | `test_no_docs_or_extra_web_endpoints` |

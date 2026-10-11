@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -33,6 +34,11 @@ class Limits:
     max_json_body: int = 1024 * 1024  # 1 MiB metadata
     min_free_space_margin: int = 64 * 1024**2  # keep 64 MiB free after write
     write_chunk: int = 1024 * 1024
+    resume_window_seconds: int = 900  # how long an interrupted upload may be resumed
+    takeover_idle_seconds: int = 8  # a silent stream older than this may be superseded
+    max_message_bytes: int = 64 * 1024
+    max_messages: int = 100
+    max_outbox_items: int = 50
 
 
 class TransferState(enum.StrEnum):
@@ -63,6 +69,7 @@ class FileState(enum.StrEnum):
     PENDING = "PENDING"
     RECEIVING = "RECEIVING"
     VERIFYING = "VERIFYING"
+    INTERRUPTED = "INTERRUPTED"  # connection dropped; resumable from `received`
     DONE = "DONE"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
@@ -98,6 +105,15 @@ class TransferRequest(_Strict):
 class FinalizeRequest(_Strict):
     sha256: str = Field(pattern=SHA256_HEX)
     size: int = Field(ge=0)
+
+
+class MessageRequest(_Strict):
+    text: str = Field(min_length=1, max_length=65536)
+
+
+class OutboxDone(_Strict):
+    status: Literal["saved", "declined", "failed"]
+    detail: str | None = Field(default=None, max_length=200)
 
 
 class ApiError(Exception):

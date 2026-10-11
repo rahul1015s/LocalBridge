@@ -5,11 +5,11 @@ Last verified: 2026-10-11, Fedora 44 (kernel 7.2.8), Python 3.14.7, JDK 25, Grad
 ## Commands
 
 ```bash
-# Fedora receiver (77 tests, real TLS sockets on 127.0.0.1)
+# Fedora receiver (92 tests, real TLS sockets on 127.0.0.1)
 cd fedora && .venv/bin/python -m pytest -q
 cd fedora && .venv/bin/ruff check . && .venv/bin/ruff format --check .
 
-# Android JVM unit tests (28 tests; 2 are skipped unless interop env is set)
+# Android JVM unit tests (43 tests; 3 are skipped unless interop env is set)
 cd android && ./gradlew testDebugUnitTest
 
 # Kotlin client <-> Python receiver over real TLS (loopback)
@@ -20,9 +20,9 @@ cd android && ./gradlew testDebugUnitTest
 
 | Suite | Result | Environment |
 |---|---|---|
-| `fedora/tests` | **77 passed** | mock-free: real uvicorn + TLS over loopback |
-| Android unit | **28 run, 26 passed, 2 skipped (interop), 0 failed** | JVM, fake receiver |
-| `scripts/interop_test.sh` | **passed**: pinned handshake, 24 MB file byte-identical, chunked unknown-size upload, forged fingerprint fails closed | loopback, JVM client |
+| `fedora/tests` | **92 passed** | mock-free: real uvicorn + TLS over loopback |
+| Android unit | **43 run, 40 passed, 3 skipped (interop), 0 failed** | JVM, fake receiver |
+| `scripts/interop_test.sh` | **passed (4 tests)**: pinned handshake, 24 MB file byte-identical, interrupted upload resumed byte-identical, outbox download with Range resume, text message, chunked unknown-size upload, upload after an 8 s idle pause, forged fingerprint fails closed | loopback, JVM client |
 | Release build `assembleRelease` | builds (unsigned, R8 on, ~2.5 MB) | — |
 | GTK window smoke (scripted) | passed: start → pair dialog → approve dialog → transfer row → stop | real Wayland session, scripted clicks, **loopback network** |
 
@@ -48,6 +48,15 @@ Android: certificate pinning (match, mismatch, expired, empty chain), QR parsing
 hosts rejected), streaming hash with bounded buffer, unknown-size (chunked), file changing mid-send,
 engine: approval wait, reject, expiry, cancel, network loss, partial failure, unreadable files,
 unknown size has no fake progress, duplicate prevention, speed meter.
+
+## Not provable here (important for the "no mobile data" requirement)
+
+Socket binding to the Wi-Fi network (`LocalNetwork`) and the hotspot routing behaviour depend on the
+Android ConnectivityManager and cannot be exercised on the JVM. Traffic to a private LAN address does
+not normally traverse the cellular network, and the app refuses non-private targets, but **no data-usage
+measurement has been done on a real phone**. Verify with Android's data-usage screen after a large
+transfer. Cloud-backed gallery items (e.g. Google Photos "not downloaded") may be fetched over the
+internet by Android *before* sending; pick files that are stored on the phone.
 
 ## NOT yet tested (do not infer from the above)
 

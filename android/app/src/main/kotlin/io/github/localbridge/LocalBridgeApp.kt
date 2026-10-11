@@ -4,7 +4,10 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Intent
+import io.github.localbridge.core.LocalNetwork
 import io.github.localbridge.core.ReceiverGateway
+import io.github.localbridge.transfer.IncomingEngine
+import io.github.localbridge.transfer.MediaStoreSink
 import io.github.localbridge.data.HistoryEntry
 import io.github.localbridge.data.HistoryStore
 import io.github.localbridge.data.SettingsStore
@@ -30,10 +33,11 @@ class AppContainer(private val app: Application) {
     private val _session = MutableStateFlow<Session?>(null)
     val session: StateFlow<Session?> = _session.asStateFlow()
 
-    val files = ContentResolverFileAccess(app.contentResolver)
+    val files = ContentResolverFileAccess(app.contentResolver) { settings.state.value.keepLocation }
     val engine = TransferEngine(
         scope = scope,
         files = files,
+        parallel = { settings.state.value.parallel },
         listener = { item, receiver ->
             if (settings.state.value.keepHistory) {
                 history.add(
@@ -42,6 +46,12 @@ class AppContainer(private val app: Application) {
             }
         },
     )
+
+    val incoming = IncomingEngine(scope, MediaStoreSink(app.contentResolver))
+
+    /** Binds sockets to the Wi-Fi network the receiver is on, so data can't go over mobile data. */
+    fun localSocketFactory(host: String): javax.net.SocketFactory? =
+        LocalNetwork.socketFactoryFor(app.getSystemService(android.net.ConnectivityManager::class.java), host)
 
     init {
         // Keep the process alive (foreground service) only while transfers are active.
@@ -55,7 +65,12 @@ class AppContainer(private val app: Application) {
     }
 
     fun setSession(s: Session?) {
-        if (s == null) engine.cancelAll()
+        if (s == null) {
+            engine.cancelAll()
+            incoming.stop()
+        } else {
+            incoming.start(s.gateway)
+        }
         _session.value = s
     }
 }

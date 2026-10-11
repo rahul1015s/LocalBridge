@@ -33,6 +33,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val settings = container.settings
     val history = container.history
     val session: StateFlow<Session?> = container.session
+    val incoming = container.incoming
+
+    private val _textStatus = MutableStateFlow<String?>(null)
+    val textStatus: StateFlow<String?> = _textStatus.asStateFlow()
+    private var pendingText: String? = null
 
     private val _stack = MutableStateFlow(listOf(Screen.HOME))
     val stack: StateFlow<List<Screen>> = _stack.asStateFlow()
@@ -63,12 +68,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _pair.value = PairState.Connecting
         pairJob = viewModelScope.launch {
             try {
-                val (gw, name) = HttpReceiver.pair(info, settings.state.value.deviceName) {
+                val (gw, name) = HttpReceiver.pair(info, settings.state.value.deviceName, container.localSocketFactory(info.host)) {
                     _pair.value = PairState.CertificateVerified
                 }
                 container.setSession(Session(gw, name, info.host))
                 _pair.value = PairState.Idle
                 _stack.value = listOf(Screen.HOME)
+                pendingText?.let { t -> pendingText = null; sendText(t) }
                 if (pendingShare.isNotEmpty()) {
                     val files = pendingShare
                     pendingShare = emptyList()
@@ -126,6 +132,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         clearSelection()
         _stack.update { it.filter { sc -> sc != Screen.SEND } + Screen.TRANSFERS }
     }
+
+    fun sendText(text: String) {
+        val s = session.value
+        if (s == null) {
+            pendingText = text
+            navigate(Screen.PAIR)
+            return
+        }
+        viewModelScope.launch {
+            _textStatus.value = try {
+                s.gateway.sendMessage(text.trim())
+                "Sent to ${s.receiverName}"
+            } catch (e: ReceiverException) {
+                e.message
+            }
+        }
+    }
+
+    fun clearTextStatus() { _textStatus.value = null }
 
     fun retry(batchId: String) {
         val s = session.value ?: return navigate(Screen.PAIR)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import shutil
 import threading
 import time
@@ -14,8 +15,9 @@ from urllib.parse import urlencode
 import uvicorn
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ValidationError
+from starlette.requests import ClientDisconnect
 
 from . import PROTOCOL_VERSION, __version__
 from .certificates import TlsIdentity, generate_identity
@@ -24,15 +26,20 @@ from .models import (
     FileState,
     FinalizeRequest,
     Limits,
+    MessageRequest,
+    OutboxDone,
     PairRequest,
     PairResponse,
     TransferRequest,
     TransferState,
 )
+from .outbox import OutboxManager
 from .pairing import AuthSession, PairingManager
 from .security import FailureLimiter
 from .storage import PARTIAL_DIR, Destination, PartialFile
 from .transfers import Transfer, TransferManager
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -44,6 +51,14 @@ class ReceiverConfig:
     limits: Limits = field(default_factory=Limits)
 
 
+@dataclass
+class Message:
+    session_id: str
+    device_name: str
+    text: str
+    at: float
+
+
 class Core:
     """Shared state; independent of any UI."""
 
@@ -52,6 +67,9 @@ class Core:
         self.limits = cfg.limits
         self.pairing = PairingManager(cfg.limits)
         self.transfers = TransferManager(cfg.limits)
+        self.outbox = OutboxManager(cfg.limits)
+        self.messages: list[Message] = []
+        self._msg_listeners: list = []
         self.dest = Destination(cfg.destination, cfg.limits.min_free_space_margin)
         self.pair_limiter = FailureLimiter(
             cfg.limits.pair_fail_limit, cfg.limits.pair_fail_window_seconds
@@ -59,6 +77,21 @@ class Core:
         self.partials: dict[tuple[str, str], PartialFile] = {}
         self._plock = threading.Lock()
         self.transfers.subscribe(self._cleanup_on_terminal)
+
+    def subscribe_messages(self, cb) -> None:
+        self._msg_listeners.append(cb)
+
+    def add_message(self, session: AuthSession, text: str) -> Message:
+        m = Message(session.session_id, session.device_name, text, time.time())
+        with self._plock:
+            self.messages.insert(0, m)
+            del self.messages[self.limits.max_messages :]
+        for cb in list(self._msg_listeners):
+            try:
+                cb(m)
+            except Exception:  # noqa: BLE001 - UI listeners must not break the protocol
+                log.exception("message listener failed")
+        return m
 
     def _cleanup_on_terminal(self, t: Transfer) -> None:
         if t.state in (
@@ -75,6 +108,10 @@ class Core:
                 pf = self.partials.pop(key)
                 # A stream may still be writing; cancel flags make it stop, and it re-checks.
                 pf.discard()
+
+
+class _Superseded(Exception):
+    """A newer stream took over this file; do not touch shared state."""
 
 
 def _err(status: int, code: str, message: str) -> JSONResponse:
@@ -194,28 +231,49 @@ def create_app(core: Core) -> FastAPI:
         transfer_id: str, file_id: str, request: Request, s: AuthSession = Depends(auth)
     ):
         mgr, lim = core.transfers, core.limits
-        t, f = mgr.begin_upload(transfer_id, s.session_id, file_id)
+        t, f, epoch = mgr.begin_upload(transfer_id, s.session_id, file_id)
         partial: PartialFile | None = None
+        key = (transfer_id, file_id)
         try:
             core.dest.validate()
-            expected = f.declared_size
+            oh = request.headers.get("x-localbridge-offset", "0")
+            if not oh.isdigit() or len(oh) > 18:
+                raise ApiError(400, "bad_offset", "Invalid resume offset.")
+            offset = int(oh)
+            with core._plock:
+                existing = core.partials.get(key)
+            if offset > 0:
+                if existing is None or existing.written != offset:
+                    have = existing.written if existing else 0
+                    raise ApiError(409, "offset_mismatch", f"Resume from byte {have}.")
+                partial = existing
+            else:
+                if existing is not None:
+                    with core._plock:
+                        core.partials.pop(key, None)
+                    existing.discard()
+                f.received = 0
             cl = request.headers.get("content-length")
+            expected = f.declared_size
             if cl is not None:
                 if not cl.isdigit():
                     raise ApiError(400, "bad_length", "Invalid Content-Length.")
-                if expected is not None and int(cl) != expected:
+                if expected is not None and offset + int(cl) != expected:
                     raise ApiError(400, "size_mismatch", "Body size differs from declared size.")
-                expected = int(cl)
+                expected = offset + int(cl)
             if expected is not None:
                 if expected > lim.max_file_size:
                     raise ApiError(413, "file_too_large", "File exceeds the size limit.")
-                core.dest.check_space(expected)
-            partial = core.dest.open_partial(transfer_id, file_id)
-            with core._plock:
-                core.partials[(transfer_id, file_id)] = partial
+                core.dest.check_space(expected - offset)
+            if partial is None:
+                partial = core.dest.open_partial(transfer_id, file_id)
+                with core._plock:
+                    core.partials[key] = partial
             buf = bytearray()
-            total = 0
+            total = offset
             async for chunk in request.stream():
+                if f.epoch != epoch:
+                    raise _Superseded
                 if f.state != FileState.RECEIVING or not mgr.is_live(t):
                     raise ApiError(409, "cancelled", "Transfer is no longer active.")
                 total += len(chunk)
@@ -227,6 +285,8 @@ def create_app(core: Core) -> FastAPI:
                     buf.clear()
                     await asyncio.to_thread(partial.write, data)
                     mgr.progress(t, f, partial.written)
+            if f.epoch != epoch:
+                raise _Superseded
             if buf:
                 await asyncio.to_thread(partial.write, bytes(buf))
             if f.state != FileState.RECEIVING or not mgr.is_live(t):
@@ -236,16 +296,25 @@ def create_app(core: Core) -> FastAPI:
             mgr.progress(t, f, partial.written)
             mgr.mark_verifying(t, f)
             return {"received": partial.written, "sha256": partial.hexdigest()}
+        except _Superseded:
+            raise
         except BaseException as e:
-            if partial is not None:
-                with core._plock:
-                    core.partials.pop((transfer_id, file_id), None)
-                partial.discard()
-            msg = e.message if isinstance(e, ApiError) else "Upload failed."
-            mgr.finish_file(t, f, ok=False, error=msg)
+            # ApiErrors (limits, mismatches, disk, cancel) are final: discard and fail the file.
+            # An offset mismatch or a dropped connection is resumable: keep the partial.
+            fatal = isinstance(e, ApiError) and e.code != "offset_mismatch"
+            if fatal:
+                if partial is not None:
+                    with core._plock:
+                        core.partials.pop(key, None)
+                    partial.discard()
+                mgr.finish_file(t, f, ok=False, error=e.message)
+            elif partial is not None:
+                mgr.progress(t, f, partial.written)  # authoritative resume offset
+            if isinstance(e, ClientDisconnect):
+                return _err(499, "client_closed", "Client disconnected.")  # nobody is listening
             raise
         finally:
-            mgr.upload_ended(t, f)
+            mgr.upload_ended(t, f, epoch)
 
     @app.post("/v1/transfers/{transfer_id}/files/{file_id}/finalize")
     async def finalize(
@@ -275,6 +344,46 @@ def create_app(core: Core) -> FastAPI:
             raise
         mgr.finish_file(t, f, ok=True, path=path, sha256=actual)
         return view(t)
+
+    # -- text / links from the phone ------------------------------------------------------
+    @app.post("/v1/messages", status_code=201)
+    async def post_message(request: Request, s: AuthSession = Depends(auth)):
+        req = await _read_json(request, MessageRequest, core.limits.max_json_body)
+        if len(req.text.encode()) > core.limits.max_message_bytes:
+            raise ApiError(413, "message_too_large", "Message is too large.")
+        core.add_message(s, req.text)
+        return {"ok": True}
+
+    # -- computer -> phone ----------------------------------------------------------------------
+    @app.get("/v1/outbox")
+    async def list_outbox(s: AuthSession = Depends(auth)):
+        return {
+            "items": [
+                {
+                    "id": i.item_id,
+                    "kind": i.kind,
+                    "name": i.name,
+                    "size": i.size,
+                    "sha256": i.sha256,
+                    "text": i.text,
+                }
+                for i in core.outbox.pending_for(s.session_id)
+            ]
+        }
+
+    @app.get("/v1/outbox/{item_id}/content")
+    async def outbox_content(item_id: str, s: AuthSession = Depends(auth)):
+        item = core.outbox.get_for_download(item_id, s.session_id)
+        # FileResponse streams in chunks and honours single-range requests (resume on the phone).
+        return FileResponse(
+            item.path, media_type="application/octet-stream", headers={"Cache-Control": "no-store"}
+        )
+
+    @app.post("/v1/outbox/{item_id}/done")
+    async def outbox_done(item_id: str, request: Request, s: AuthSession = Depends(auth)):
+        req = await _read_json(request, OutboxDone, core.limits.max_json_body)
+        core.outbox.mark(item_id, s.session_id, req.status, req.detail)
+        return {"ok": True}
 
     return app
 
@@ -348,6 +457,7 @@ class ReceiverService:
     def stop(self, timeout: float = 10.0) -> None:
         self.core.transfers.cancel_all("Receiver stopped.")
         self.core.pairing.revoke_all()
+        self.core.outbox.drop_session()
         if self._server:
             self._server.should_exit = True
         if self._thread:
