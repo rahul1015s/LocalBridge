@@ -58,11 +58,27 @@ Transfers are bound to the session that created them; another session receives `
 | `POST /v1/transfers/{id}/cancel` | yes | sender cancels (idempotent) |
 | `PUT /v1/transfers/{id}/files/{file_id}/content` | yes | stream bytes; refused until `APPROVED` |
 | `POST /v1/transfers/{id}/files/{file_id}/finalize` | yes | `{sha256, size}` computed by the sender; receiver verifies and atomically saves |
+| `POST /v1/messages` | yes | `{text}` (<= 64 KiB) text/link from the phone; shown on the desktop, never opened automatically |
+| `GET /v1/outbox` | yes | items the desktop user queued **for this session**: `{id, kind: file|text, name, size, sha256, text}` |
+| `GET /v1/outbox/{id}/content` | yes | file bytes; supports a single `Range: bytes=N-` (resume) |
+| `POST /v1/outbox/{id}/done` | yes | `{status: saved|declined|failed, detail?}` |
 
 **Deviation from the original sketch:** there is no network `approve`/`reject` endpoint.
 Approval is a *local desktop action*; a sender must never be able to approve its own request.
 Content upload is per file (a transfer holds many files) and followed by an explicit `finalize`
 so the sender can hash in a single pass while streaming.
+
+### Resuming an interrupted upload
+
+If the connection drops, the receiver **keeps the partial file and its running hash** and marks the
+file `INTERRUPTED` with `received` = bytes safely written. The sender reads `received` from
+`GET /v1/transfers/{id}` and re-sends the remainder with header `X-LocalBridge-Offset: <received>`
+(`Content-Length` = remaining bytes). The offset must equal the receiver's byte count exactly,
+otherwise `409 offset_mismatch` (partial kept). Offset 0 discards the old partial and starts over.
+The sender re-reads and hashes the already-delivered prefix locally so `finalize` still covers the
+whole file. A stream that has been silent for 8 s may be superseded by a new one for the same file
+(half-open connections); an active stream is not (`409 file_state`). An interrupted transfer expires
+after 15 minutes with no activity and its partials are deleted.
 
 ### Content upload
 
@@ -114,9 +130,19 @@ content. Notable codes: `unauthorized` 401, `pairing_invalid` 401, `pairing_deni
 `integrity_failed` 422, `rate_limited`/`too_many_*` 429, `insufficient_storage`/`disk_full`/
 `destination_*` 507.
 
+## Computer -> phone
+
+The desktop user adds files/text to an outbox addressed to the most recently paired phone. Nothing is
+pushed: the phone polls `GET /v1/outbox` (so only phone->computer connections are ever needed, which
+suits hotspots that block inbound connections to the phone). The phone shows each item and the
+person must **Accept**; files are downloaded (resumable via `Range`), hashed, compared with the
+advertised SHA-256, and only then published to Downloads/LocalBridge. Remote callers only ever supply
+an item id; local file paths never leave the desktop, and a file modified after it was queued is
+refused (`409 file_changed`).
+
 ## Not in v1
 
-Resumable uploads (an interrupted file is discarded and re-sent), persistent trusted devices,
+Saved/trusted devices, folder transfer,
 reverse connections / relay, IPv6, mDNS discovery.
 
 ## Versioning

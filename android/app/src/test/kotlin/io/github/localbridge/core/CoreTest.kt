@@ -100,6 +100,21 @@ class HashingStreamBodyTest {
         assertTrue(progress.zipWithNext().all { (a, b) -> b > a })
     }
 
+    @Test fun resumeSendsOnlyTheRemainderButHashesTheWholeFile() {
+        val data = ByteArray(2 * HashingStreamBody.BUFFER + 123) { (it % 199).toByte() }
+        val offset = HashingStreamBody.BUFFER + 7L
+        val body = HashingStreamBody({ ByteArrayInputStream(data) }, data.size.toLong(), offset) {}
+        val sink = Buffer(); body.writeTo(sink)
+        assertEquals(data.size - offset, sink.size)
+        assertEquals(data.size - offset, body.contentLength())
+        assertEquals(MessageDigest.getInstance("SHA-256").digest(data).joinToString("") { "%02x".format(it) }, body.sha256Hex)
+        assertEquals(data.size.toLong(), body.sent)
+    }
+
+    @Test fun resumeOffsetBeyondFileEndFails() {
+        try { HashingStreamBody({ ByteArrayInputStream(ByteArray(5)) }, 10, 8) {}.writeTo(Buffer()); fail() } catch (_: IOException) {}
+    }
+
     @Test fun unknownSizeUsesChunkedAndStillHashes() {
         val body = HashingStreamBody({ ByteArrayInputStream("abc".toByteArray()) }, null) {}
         assertEquals(-1L, body.contentLength())

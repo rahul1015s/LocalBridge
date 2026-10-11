@@ -33,6 +33,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -107,6 +108,20 @@ fun SendScreen(vm: AppViewModel) {
                         docs.launch(arrayOf("application/*", "text/*"))
                     }
                     SourceButton(Icons.Rounded.FolderOpen, "Any file", Modifier.weight(1f)) { docs.launch(arrayOf("*/*")) }
+                }
+                Spacer(Modifier.height(12.dp))
+                var text by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf("") }
+                val status by vm.textStatus.collectAsState()
+                SurfaceCard {
+                    Text("Text or link", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(8.dp))
+                    androidx.compose.material3.OutlinedTextField(
+                        value = text, onValueChange = { text = it.take(20000); vm.clearTextStatus() },
+                        modifier = Modifier.fillMaxWidth(), label = { Text("Paste or type") }, maxLines = 4,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(onClick = { vm.sendText(text); text = "" }, enabled = text.isNotBlank() && session != null) { Text("Send text") }
+                    status?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 6.dp)) }
                 }
                 Spacer(Modifier.height(8.dp))
                 SectionTitle(if (selection.isEmpty()) "Selected" else "Selected (${selection.size})")

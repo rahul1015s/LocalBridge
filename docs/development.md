@@ -36,12 +36,17 @@ Legend: [x] done with test evidence · [~] implemented, not verified on target h
 
 ### Phase 2 — reliability
 - [x] Multiple files, cancellation, honest progress, limits, disk-full, interrupted uploads
-- [ ] Resumable uploads (intentionally deferred)
+- [x] Resumable uploads (receiver + Android engine; interop-tested), parallel streams
 - [ ] Multi-GB tests on real storage; throughput on real Wi-Fi
 
 ### Phase 3 — Android UX
 - [~] Home, Pair, Send (in-app picker + review), Transfers, History, Settings screens; share-sheet intake; foreground service
 - [ ] Instrumentation / ViewModel tests; accessibility pass with TalkBack; tablet layout
+
+### Added after Phase 3
+- [x] Computer → phone outbox (desktop UI, drag-and-drop, phone accept/download/verify), text/links both ways
+- [x] Desktop notifications + Open folder; Wi-Fi socket binding (untestable on JVM)
+- [ ] Folder transfer, saved trusted devices, mDNS discovery, Windows/macOS receivers (deferred: need a key-management design / more platforms)
 
 ### Phase 4 — Fedora UX
 - [x] GTK4/Libadwaita window: start/stop, QR (expiring), approvals, progress, destination, devices

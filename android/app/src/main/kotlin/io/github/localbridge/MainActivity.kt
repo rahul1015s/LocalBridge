@@ -73,7 +73,11 @@ class MainActivity : ComponentActivity() {
             Intent.ACTION_SEND_MULTIPLE -> streamListExtra(i)
             else -> return
         }
-        if (uris.isNotEmpty()) vm.stage(uris.map { it.toString() })
+        if (uris.isNotEmpty()) {
+            vm.stage(uris.map { it.toString() })
+        } else if (i.action == Intent.ACTION_SEND) {
+            i.getStringExtra(Intent.EXTRA_TEXT)?.takeIf { it.isNotBlank() }?.let { vm.sendText(it) }
+        }
     }
 
     @Suppress("DEPRECATION")

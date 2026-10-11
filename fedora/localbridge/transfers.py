@@ -52,6 +52,8 @@ class FileEntry:
     sha256: str | None = None
     saved_path: Path | None = None
     error: str | None = None
+    epoch: int = 0  # bumps when a new stream supersedes a silent one
+    last_activity: float = 0.0
 
 
 @dataclass
@@ -117,12 +119,25 @@ class TransferManager:
         self._expire(t)
         return t
 
-    def _expire(self, t: Transfer) -> None:
+    def _expire(self, t: Transfer) -> bool:
+        now = self._clock()
         if (
             t.state in (S.AWAITING_APPROVAL, S.APPROVED)
-            and self._clock() - t.updated_at > self._limits.approval_timeout_seconds
+            and now - t.updated_at > self._limits.approval_timeout_seconds
         ):
             self._move(t, S.EXPIRED, "Approval timed out.")
+            return True
+        if (
+            t.state == S.TRANSFERRING
+            and t.uploads_in_flight == 0
+            and now - t.updated_at > self._limits.resume_window_seconds
+        ):
+            for f in t.files:
+                if f.state not in (FileState.DONE, FileState.FAILED, FileState.CANCELLED):
+                    f.state, f.error = FileState.FAILED, "Resume window expired."
+            self._move(t, S.FAILED, "Interrupted transfer was not resumed in time.")
+            return True
+        return False
 
     # -- creation -----------------------------------------------------------------
     def create(self, session_id: str, device_name: str, specs: list[FileSpec]) -> Transfer:
@@ -171,7 +186,12 @@ class TransferManager:
     # -- sender operations -----------------------------------------------------------
     def get(self, transfer_id: str, session_id: str) -> Transfer:
         with self._lock:
-            return self._get(transfer_id, session_id)
+            before = None
+            t = self._get(transfer_id, session_id)
+            before = t.state
+        if before in TERMINAL_STATES and before in (S.EXPIRED, S.FAILED):
+            self._emit(t)  # lets listeners clean up partial files after an expiry
+        return t
 
     def cancel(
         self, transfer_id: str, session_id: str | None, reason: str = "Cancelled."
@@ -189,8 +209,11 @@ class TransferManager:
 
     def begin_upload(
         self, transfer_id: str, session_id: str, file_id: str
-    ) -> tuple[Transfer, FileEntry]:
-        """Reserve a content stream. Content is refused until the user approved."""
+    ) -> tuple[Transfer, FileEntry, int]:
+        """Reserve a content stream. Content is refused until the user approved.
+
+        Returns the epoch of this stream; a newer stream supersedes an older silent one.
+        """
         with self._lock:
             t = self._get(transfer_id, session_id)
             if t.state not in (S.APPROVED, S.TRANSFERRING, S.VERIFYING):
@@ -199,26 +222,34 @@ class TransferManager:
             f = next((x for x in t.files if x.file_id == file_id), None)
             if f is None:
                 raise ApiError(404, "not_found", "File not found.")
-            if f.state != FileState.PENDING:
+            now = self._clock()
+            if f.state == FileState.RECEIVING:
+                if now - f.last_activity < self._limits.takeover_idle_seconds:
+                    raise ApiError(409, "file_state", "File is already being uploaded.")
+                f.epoch += 1  # the previous stream went silent: supersede it
+            elif f.state not in (FileState.PENDING, FileState.INTERRUPTED):
                 raise ApiError(409, "file_state", f"File is {f.state}; cannot upload again.")
-            active = sum(1 for x in self._transfers.values() if x.uploads_in_flight > 0)
-            if t.uploads_in_flight == 0 and active >= self._limits.max_active_transfers:
-                raise ApiError(429, "too_many_active", "Too many active transfers.")
-            if (
-                sum(x.uploads_in_flight for x in self._transfers.values())
-                >= self._limits.max_concurrent_uploads
-            ):
-                raise ApiError(429, "too_many_uploads", "Too many simultaneous uploads.")
+            elif f.state in (FileState.PENDING, FileState.INTERRUPTED):
+                active = sum(1 for x in self._transfers.values() if x.uploads_in_flight > 0)
+                if t.uploads_in_flight == 0 and active >= self._limits.max_active_transfers:
+                    raise ApiError(429, "too_many_active", "Too many active transfers.")
+                total_up = sum(x.uploads_in_flight for x in self._transfers.values())
+                if total_up >= self._limits.max_concurrent_uploads:
+                    raise ApiError(429, "too_many_uploads", "Too many simultaneous uploads.")
             f.state = FileState.RECEIVING
+            f.last_activity = now
             t.uploads_in_flight += 1
+            t.updated_at = now
             if t.state == S.APPROVED:
                 self._move(t, S.TRANSFERRING)
+            epoch = f.epoch
         self._emit(t)
-        return t, f
+        return t, f, epoch
 
     def progress(self, t: Transfer, f: FileEntry, received: int) -> None:
         with self._lock:
             f.received = received
+            f.last_activity = t.updated_at = self._clock()
         self._emit(t)
 
     def is_live(self, t: Transfer) -> bool:
@@ -246,13 +277,14 @@ class TransferManager:
             self._settle(t)
         self._emit(t)
 
-    def upload_ended(self, t: Transfer, f: FileEntry) -> None:
-        """Always called when a content stream ends; handles aborted streams."""
+    def upload_ended(self, t: Transfer, f: FileEntry, epoch: int) -> None:
+        """Always called when a content stream ends; a dropped stream becomes INTERRUPTED."""
         with self._lock:
             t.uploads_in_flight = max(0, t.uploads_in_flight - 1)
-            if f.state == FileState.RECEIVING:  # stream died before completing
-                f.state = FileState.FAILED
-                f.error = f.error or "Upload interrupted."
+            t.updated_at = self._clock()
+            if f.epoch == epoch and f.state == FileState.RECEIVING:
+                f.state = FileState.INTERRUPTED  # resumable; the partial file is kept
+                f.error = "Connection interrupted."
             self._settle(t)
         self._emit(t)
 
@@ -268,9 +300,11 @@ class TransferManager:
     # -- housekeeping ------------------------------------------------------------------
     def all(self) -> list[Transfer]:
         with self._lock:
-            for t in self._transfers.values():
-                self._expire(t)
-            return list(self._transfers.values())
+            changed = [t for t in self._transfers.values() if self._expire(t)]
+            out = list(self._transfers.values())
+        for t in changed:
+            self._emit(t)
+        return out
 
     def cancel_all(self, reason: str) -> None:
         for t in self.all():

@@ -75,7 +75,7 @@ fun HomeScreen(vm: AppViewModel) {
                         Column(Modifier.weight(1f)) {
                             Text("Connected", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onPrimaryContainer)
                             Text(s.receiverName, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                            Text("${s.host} · encrypted · this session only", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                            Text("${s.host} · encrypted · local network only, no mobile data", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
                         }
                     }
                     Spacer(Modifier.height(16.dp))
@@ -107,6 +107,8 @@ fun HomeScreen(vm: AppViewModel) {
                     }
                 }
             }
+
+            IncomingSection(vm)
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 SectionTitle("Recent", Modifier.weight(1f))

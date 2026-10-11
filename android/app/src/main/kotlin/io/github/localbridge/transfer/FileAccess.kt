@@ -15,7 +15,11 @@ interface FileAccess {
     fun open(ref: String): InputStream
 }
 
-class ContentResolverFileAccess(private val resolver: ContentResolver) : FileAccess {
+class ContentResolverFileAccess(
+    private val resolver: ContentResolver,
+    /** Ask Android for the un-redacted original (keeps photo GPS data) when permitted. */
+    private val requireOriginal: () -> Boolean = { false },
+) : FileAccess {
     override fun describe(ref: String): FileInfo {
         val uri = Uri.parse(ref)
         var name: String? = null
@@ -40,7 +44,12 @@ class ContentResolverFileAccess(private val resolver: ContentResolver) : FileAcc
 
     override fun open(ref: String): InputStream =
         try {
-            resolver.openInputStream(Uri.parse(ref)) ?: throw FileNotFoundException("Cannot open file")
+            val uri = Uri.parse(ref)
+            // Bytes are always sent exactly as stored: no resizing, no recompression.
+            val original = if (requireOriginal() && uri.authority?.contains("media") == true) {
+                runCatching { resolver.openInputStream(android.provider.MediaStore.setRequireOriginal(uri)) }.getOrNull()
+            } else null
+            original ?: resolver.openInputStream(uri) ?: throw FileNotFoundException("Cannot open file")
         } catch (e: SecurityException) {
             throw FileNotFoundException("Access to this file was revoked")
         }

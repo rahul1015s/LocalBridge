@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
 
@@ -9,7 +10,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
 from ..models import TERMINAL_STATES, TransferState  # noqa: E402
 from ..network import local_ipv4_addresses  # noqa: E402
@@ -17,6 +18,8 @@ from ..server import ReceiverConfig, ReceiverService  # noqa: E402
 from ..settings import Settings  # noqa: E402
 from ..transfers import Transfer  # noqa: E402
 from .qr import qr_texture  # noqa: E402
+
+log = logging.getLogger(__name__)
 
 
 def human_size(n: int | None) -> str:
@@ -117,6 +120,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.service: ReceiverService | None = None
         self._rows: dict[str, TransferRow] = {}
         self._prompted: set[str] = set()
+        self._notified_done: set[str] = set()
         self._qr_deadline = 0.0
         self._last_ui_push = 0.0
         self._build()
@@ -208,6 +212,13 @@ class MainWindow(Adw.ApplicationWindow):
         self.dest_row = Adw.ActionRow(title="Save files to")
         pick = Gtk.Button(label="Choose…", valign=Gtk.Align.CENTER)
         pick.connect("clicked", self._choose_dest)
+        open_btn = Gtk.Button(
+            icon_name="folder-open-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Open folder"
+        )
+        open_btn.add_css_class("flat")
+        open_btn.update_property([Gtk.AccessibleProperty.LABEL], ["Open destination folder"])
+        open_btn.connect("clicked", lambda *_: self._open_folder())
+        self.dest_row.add_suffix(open_btn)
         self.dest_row.add_suffix(pick)
         self.pick_btn = pick
         for r in (self.name_row, self.iface_row, self.dest_row):
@@ -232,6 +243,37 @@ class MainWindow(Adw.ApplicationWindow):
         self.tr_list.append(self.empty)
         self.tr_group.add(self.tr_list)
         page.append(self.tr_group)
+
+        # computer -> phone
+        self.out_group = Adw.PreferencesGroup(
+            title="Send to phone",
+            description="Choose files, or drop them anywhere on this window.",
+            visible=False,
+        )
+        pick_out = Adw.ActionRow(title="Files", subtitle="The phone asks to accept before saving")
+        b = Gtk.Button(label="Choose…", valign=Gtk.Align.CENTER)
+        b.connect("clicked", self._choose_outgoing)
+        pick_out.add_suffix(b)
+        self.out_group.add(pick_out)
+        self.text_row = Adw.EntryRow(title="Send text or a link", show_apply_button=True)
+        self.text_row.connect("apply", self._send_text)
+        self.out_group.add(self.text_row)
+        self.out_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        self.out_list.add_css_class("boxed-list")
+        self.out_list.set_visible(False)
+        self.out_group.add(self.out_list)
+        page.append(self.out_group)
+
+        # phone -> computer text/links
+        self.msg_group = Adw.PreferencesGroup(title="Text and links from phone", visible=False)
+        self.msg_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        self.msg_list.add_css_class("boxed-list")
+        self.msg_group.add(self.msg_list)
+        page.append(self.msg_group)
+
+        drop = Gtk.DropTarget.new(Gdk.FileList, Gdk.DragAction.COPY)
+        drop.connect("drop", self._on_drop)
+        self.add_controller(drop)
 
         clamp = Adw.Clamp(maximum_size=640, child=page)
         scroller = Gtk.ScrolledWindow(
@@ -325,6 +367,8 @@ class MainWindow(Adw.ApplicationWindow):
             svc = ReceiverService(cfg)
             svc.core.pairing.subscribe(lambda e, p: GLib.idle_add(self._on_pair_event, e, p))
             svc.core.transfers.subscribe(lambda t: self._on_transfer_event(t))
+            svc.core.outbox.subscribe(lambda i: GLib.idle_add(self._refresh_outbox))
+            svc.core.subscribe_messages(lambda m: GLib.idle_add(self._on_message, m))
             svc.start()
         except (OSError, RuntimeError, Exception) as e:  # noqa: BLE001
             self._toast(f"Could not start: {e}")
@@ -345,6 +389,11 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _clear_rows_for_stopped(self) -> None:
         self._prompted.clear()
+        self.out_group.set_visible(False)
+        self.msg_group.set_visible(False)
+        for lst in (self.msg_list,):
+            while (c := lst.get_first_child()) is not None:
+                lst.remove(c)
 
     def _new_code(self) -> None:
         svc = self.service
@@ -393,6 +442,8 @@ class MainWindow(Adw.ApplicationWindow):
     def _render_devices(self) -> None:
         sessions = self.service.core.pairing.sessions()
         self.dev_group.set_visible(bool(sessions))
+        self.out_group.set_visible(bool(sessions))
+        self._target_sessions = sessions
         child = self.dev_list.get_first_child()
         while child:
             nxt = child.get_next_sibling()
@@ -463,8 +514,20 @@ class MainWindow(Adw.ApplicationWindow):
             self._rows[t.transfer_id] = row
             self.tr_list.prepend(row)
         row.update(t)
+        if t.state == TransferState.COMPLETED and t.transfer_id not in self._notified_done:
+            self._notified_done.add(t.transfer_id)
+            self._notify(
+                "done-" + t.transfer_id,
+                "Transfer complete",
+                f"{len(t.files)} file(s) saved to {self.settings.destination}",
+            )
         if t.state == TransferState.AWAITING_APPROVAL and t.transfer_id not in self._prompted:
             self._prompted.add(t.transfer_id)
+            self._notify(
+                "req-" + t.transfer_id,
+                f"{t.device_name} wants to send files",
+                f"{len(t.files)} file(s) waiting for your approval",
+            )
             self._ask_approve(t)
         return GLib.SOURCE_REMOVE
 
@@ -500,6 +563,135 @@ class MainWindow(Adw.ApplicationWindow):
 
         d.connect("response", done)
         d.present(self)
+
+    # -- computer -> phone ---------------------------------------------------------------------
+    def _target_session(self):
+        sessions = self.service.core.pairing.sessions() if self.running else []
+        return sessions[-1] if sessions else None  # most recently paired phone
+
+    def _choose_outgoing(self, *_):
+        Gtk.FileDialog(title="Choose files to send to your phone").open_multiple(
+            self, None, self._outgoing_chosen
+        )
+
+    def _outgoing_chosen(self, dlg, res):
+        try:
+            files = dlg.open_multiple_finish(res)
+        except GLib.Error:
+            return
+        self._queue_paths([f.get_path() for f in files if f.get_path()])
+
+    def _on_drop(self, _target, value, *_):
+        if not self._target_session():
+            self._toast("Pair a phone first, then drop files here.")
+            return False
+        self._queue_paths([f.get_path() for f in value.get_files() if f.get_path()])
+        return True
+
+    def _queue_paths(self, paths) -> None:
+        sess = self._target_session()
+        if not sess:
+            self._toast("No phone is connected.")
+            return
+        from ..models import ApiError
+
+        for path in paths:
+            try:
+                self.service.core.outbox.add_file(sess.session_id, Path(path))
+            except ApiError as e:
+                self._toast(e.message)
+        self._refresh_outbox()
+
+    def _send_text(self, row) -> None:
+        text = row.get_text().strip()
+        sess = self._target_session()
+        if not text or not sess:
+            return
+        from ..models import ApiError
+
+        try:
+            self.service.core.outbox.add_text(sess.session_id, text)
+            row.set_text("")
+        except ApiError as e:
+            self._toast(e.message)
+        self._refresh_outbox()
+
+    def _refresh_outbox(self):
+        if not self.running:
+            return GLib.SOURCE_REMOVE
+        while (c := self.out_list.get_first_child()) is not None:
+            self.out_list.remove(c)
+        items = self.service.core.outbox.items()
+        self.out_list.set_visible(bool(items))
+        labels = {
+            "PREPARING": "Preparing…",
+            "READY": "Waiting for the phone to accept",
+            "DELIVERED": "Saved on the phone",
+            "DECLINED": "Declined",
+            "FAILED": "Failed",
+        }
+        for it in items:
+            title = it.name if it.kind == "file" else (it.text or "")[:60]
+            sub = labels.get(it.state, it.state) + (f" · {it.detail}" if it.detail else "")
+            if it.kind == "file":
+                sub = f"{human_size(it.size)} · {sub}"
+            row = Adw.ActionRow(
+                title=GLib.markup_escape_text(title), subtitle=GLib.markup_escape_text(sub)
+            )
+            if it.state in ("PREPARING", "READY"):
+                b = Gtk.Button(
+                    icon_name="edit-delete-symbolic",
+                    valign=Gtk.Align.CENTER,
+                    tooltip_text="Withdraw",
+                )
+                b.add_css_class("flat")
+                b.update_property([Gtk.AccessibleProperty.LABEL], ["Withdraw"])
+                b.connect("clicked", lambda _b, i=it.item_id: self.service.core.outbox.cancel(i))
+                row.add_suffix(b)
+            self.out_list.append(row)
+        return GLib.SOURCE_REMOVE
+
+    # -- phone -> computer text ------------------------------------------------------------------
+    def _on_message(self, m):
+        self.msg_group.set_visible(True)
+        text = m.text
+        row = Adw.ActionRow(
+            title=GLib.markup_escape_text(text[:200]),
+            subtitle=GLib.markup_escape_text(f"From {m.device_name}"),
+        )
+        row.set_title_lines(3)
+        copy = Gtk.Button(
+            icon_name="edit-copy-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Copy"
+        )
+        copy.add_css_class("flat")
+        copy.update_property([Gtk.AccessibleProperty.LABEL], ["Copy text"])
+        copy.connect("clicked", lambda *_: (self.get_clipboard().set(text), self._toast("Copied")))
+        row.add_suffix(copy)
+        if text.startswith(("http://", "https://")) and "\n" not in text:
+            go = Gtk.Button(label="Open", valign=Gtk.Align.CENTER)  # only on an explicit click
+            go.connect("clicked", lambda *_: Gtk.UriLauncher.new(text).launch(self, None, None))
+            row.add_suffix(go)
+        self.msg_list.prepend(row)
+        self._notify("message-" + str(id(m)), f"Text from {m.device_name}", text[:120])
+        return GLib.SOURCE_REMOVE
+
+    # -- desktop integration -----------------------------------------------------------------------
+    def _open_folder(self) -> None:
+        d = Path(self.settings.destination).expanduser()
+        d.mkdir(parents=True, exist_ok=True)
+        Gtk.FileLauncher.new(Gio.File.new_for_path(str(d))).launch(self, None, None)
+
+    def _notify(self, nid: str, title: str, body: str) -> None:
+        """Desktop notification, only when the window isn't in front; harmless if unsupported."""
+        app = self.get_application()
+        if app is None or self.is_active():
+            return
+        try:
+            n = Gio.Notification.new(title)
+            n.set_body(body)
+            app.send_notification(nid, n)
+        except Exception:  # noqa: BLE001 - notifications are optional
+            log.debug("notification failed", exc_info=True)
 
     # -- misc ---------------------------------------------------------------------------------------------------
     def _toast(self, msg: str) -> None:

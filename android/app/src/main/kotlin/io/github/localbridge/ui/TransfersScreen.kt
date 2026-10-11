@@ -106,7 +106,7 @@ private fun ItemRow(item: QueueItem) {
                 val detail = when (item.state) {
                     ItemState.QUEUED -> "Queued"
                     ItemState.WAITING -> "Waiting for approval · ${formatBytes(item.size)}"
-                    ItemState.SENDING -> listOfNotNull(
+                    ItemState.SENDING -> item.note ?: listOfNotNull(
                         if (item.size != null) "${formatBytes(item.sent)} of ${formatBytes(item.size)}" else "${formatBytes(item.sent)} sent",
                         formatSpeed(item.speedBps), formatEta(item.etaSeconds),
                     ).joinToString(" · ")

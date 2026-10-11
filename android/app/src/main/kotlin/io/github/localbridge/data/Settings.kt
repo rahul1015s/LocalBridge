@@ -13,6 +13,10 @@ data class AppSettings(
     val theme: ThemeMode = ThemeMode.SYSTEM,
     val notifications: Boolean = true,
     val keepHistory: Boolean = true,
+    /** Files sent at the same time (1-4). */
+    val parallel: Int = 3,
+    /** Keep photo GPS data (needs the media-location permission). */
+    val keepLocation: Boolean = false,
 )
 
 /** Plain preferences only. No credentials are ever persisted: sessions live in memory. */
@@ -26,6 +30,8 @@ class SettingsStore(context: Context) {
         theme = runCatching { ThemeMode.valueOf(prefs.getString("theme", "SYSTEM")!!) }.getOrDefault(ThemeMode.SYSTEM),
         notifications = prefs.getBoolean("notifications", true),
         keepHistory = prefs.getBoolean("keep_history", true),
+        parallel = prefs.getInt("parallel", 3).coerceIn(1, 4),
+        keepLocation = prefs.getBoolean("keep_location", false),
     )
 
     fun update(f: (AppSettings) -> AppSettings) {
@@ -33,6 +39,7 @@ class SettingsStore(context: Context) {
         prefs.edit()
             .putString("device_name", n.deviceName).putString("theme", n.theme.name)
             .putBoolean("notifications", n.notifications).putBoolean("keep_history", n.keepHistory)
+            .putInt("parallel", n.parallel.coerceIn(1, 4)).putBoolean("keep_location", n.keepLocation)
             .apply()
         _state.value = n
     }

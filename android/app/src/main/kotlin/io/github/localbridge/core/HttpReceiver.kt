@@ -10,7 +10,10 @@ import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLException
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.HttpUrl
@@ -58,25 +61,39 @@ internal fun mapIo(e: Throwable): ReceiverException = when {
     else -> ReceiverException(ReceiverException.Kind.UNREACHABLE, null, "Connection lost.", e)
 }
 
-/** Request body that streams from any InputStream with a bounded buffer and hashes as it sends. */
+/**
+ * Request body that streams from any InputStream with a bounded buffer and hashes as it sends.
+ * When resuming ([offset] > 0) the already-delivered prefix is re-read locally and hashed (not sent)
+ * so the digest still covers the whole file.
+ */
 internal class HashingStreamBody(
     private val open: () -> InputStream,
     private val declared: Long?,
+    private val offset: Long = 0,
     private val onProgress: (Long) -> Unit,
 ) : RequestBody() {
     private val digest = MessageDigest.getInstance("SHA-256")
+    /** Total bytes of the file covered so far (prefix + sent). */
     var sent: Long = 0
         private set
 
     val sha256Hex: String get() = digest.digest().joinToString("") { "%02x".format(it) }
 
     override fun contentType() = BINARY
-    override fun contentLength(): Long = declared ?: -1L // -1 => chunked (unknown size)
+    override fun contentLength(): Long = declared?.minus(offset) ?: -1L // -1 => chunked (unknown size)
     override fun isOneShot() = true
 
     override fun writeTo(sink: BufferedSink) {
         open().use { input ->
             val buf = ByteArray(BUFFER) // bounded: file size never affects memory use
+            var skip = offset
+            while (skip > 0) { // hash the prefix the receiver already has
+                val n = input.read(buf, 0, minOf(buf.size.toLong(), skip).toInt())
+                if (n < 0) throw IOException("File is shorter than the resume offset")
+                digest.update(buf, 0, n)
+                skip -= n
+                sent += n
+            }
             while (true) {
                 val n = input.read(buf)
                 if (n < 0) break
@@ -157,11 +174,13 @@ class HttpReceiver(
         transferId: String,
         fileId: String,
         declaredSize: Long?,
+        offset: Long,
         open: () -> InputStream,
         onProgress: (Long) -> Unit,
     ): UploadResult {
-        val body = HashingStreamBody(open, declaredSize, onProgress)
-        val r = req(url("v1", "transfers", transferId, "files", fileId, "content")).put(body).build()
+        val body = HashingStreamBody(open, declaredSize, offset, onProgress)
+        val r = req(url("v1", "transfers", transferId, "files", fileId, "content"))
+            .header("X-LocalBridge-Offset", offset.toString()).put(body).build()
         val c = client.newBuilder().readTimeout(120, TimeUnit.SECONDS).build()
         val (s, b) = exec(c, r)
         check(s, b)
@@ -181,6 +200,62 @@ class HttpReceiver(
         return parseTransfer(check(s, b))
     }
 
+    override suspend fun sendMessage(text: String) {
+        val body = JSONObject().put("text", text).toString().toRequestBody(JSON)
+        val (s, b) = exec(client, req(url("v1", "messages")).post(body).build())
+        check(s, b)
+    }
+
+    override suspend fun listOutbox(): List<OutboxEntry> {
+        val (s, b) = exec(client, req(url("v1", "outbox")).get().build())
+        val arr = JSONObject(check(s, b)).getJSONArray("items")
+        return (0 until arr.length()).map {
+            val o = arr.getJSONObject(it)
+            OutboxEntry(
+                o.getString("id"), o.getString("kind"), o.getString("name"), o.optLong("size", 0),
+                if (o.isNull("sha256")) null else o.getString("sha256"),
+                if (o.isNull("text")) null else o.getString("text"),
+            )
+        }
+    }
+
+    override suspend fun download(itemId: String, offset: Long, onChunk: (ByteArray, Int) -> Unit) {
+        val rb = req(url("v1", "outbox", itemId, "content")).get()
+        if (offset > 0) rb.header("Range", "bytes=$offset-")
+        val c = client.newBuilder().readTimeout(60, TimeUnit.SECONDS).build()
+        val resp = try {
+            c.newCall(rb.build()).await()
+        } catch (e: IOException) {
+            throw mapIo(e)
+        }
+        resp.use { r ->
+            if (r.code !in 200..299) check(r.code, r.body.string())
+            if (offset > 0 && r.code != 206) {
+                throw ReceiverException(ReceiverException.Kind.OTHER, "no_range", "The computer can't resume this download.")
+            }
+            try {
+                withContext(Dispatchers.IO) {
+                    val src = r.body.source()
+                    val buf = ByteArray(256 * 1024)
+                    while (true) {
+                        ensureActive()
+                        val n = src.read(buf)
+                        if (n < 0) break
+                        onChunk(buf, n)
+                    }
+                }
+            } catch (e: IOException) {
+                throw mapIo(e)
+            }
+        }
+    }
+
+    override suspend fun outboxDone(itemId: String, status: String, detail: String?) {
+        val body = JSONObject().put("status", status).apply { if (detail != null) put("detail", detail.take(200)) }
+            .toString().toRequestBody(JSON)
+        exec(client, req(url("v1", "outbox", itemId, "done")).post(body).build())
+    }
+
     private fun parseTransfer(json: String): RemoteTransfer {
         val o = JSONObject(json)
         val files = o.getJSONArray("files")
@@ -195,6 +270,7 @@ class HttpReceiver(
                     f.getString("name"),
                     if (f.isNull("size")) null else f.getLong("size"),
                     runCatching { FileStatus.valueOf(f.getString("state")) }.getOrDefault(FileStatus.PENDING),
+                    f.optLong("received", 0),
                 )
             },
         )
@@ -202,8 +278,13 @@ class HttpReceiver(
 
     companion object {
         /** Pair using the QR contents. Blocks until the person confirms on the computer. */
-        suspend fun pair(info: PairingInfo, deviceName: String, onVerified: () -> Unit): Pair<HttpReceiver, String> {
-            val client = PinnedTls.client(info.fingerprint) { onVerified() }
+        suspend fun pair(
+            info: PairingInfo,
+            deviceName: String,
+            socketFactory: javax.net.SocketFactory? = null,
+            onVerified: () -> Unit,
+        ): Pair<HttpReceiver, String> {
+            val client = PinnedTls.client(info.fingerprint, socketFactory) { onVerified() }
             val url = HttpUrl.Builder().scheme("https").host(info.host).port(info.port)
                 .addPathSegments("v1/pair").build()
             val body = JSONObject()

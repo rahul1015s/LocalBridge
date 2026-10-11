@@ -73,6 +73,23 @@ fun SettingsScreen(vm: AppViewModel) {
                 }
             }
             SurfaceCard {
+                Text("Sending", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(8.dp))
+                Text("Files sent at the same time: ${s.parallel}", style = MaterialTheme.typography.bodyLarge)
+                androidx.compose.material3.Slider(
+                    value = s.parallel.toFloat(), onValueChange = { v -> vm.settings.update { it.copy(parallel = v.toInt().coerceIn(1, 4)) } },
+                    valueRange = 1f..4f, steps = 2,
+                )
+                Text("Files are always sent exactly as stored — never resized or recompressed — and only over your local network.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val gps = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { ok ->
+                    vm.settings.update { it.copy(keepLocation = ok) }
+                }
+                ToggleRow("Keep photo location (GPS)", "Android hides it by default. Needs the media-location permission.", s.keepLocation) { v ->
+                    if (v) gps.launch(android.Manifest.permission.ACCESS_MEDIA_LOCATION) else vm.settings.update { it.copy(keepLocation = false) }
+                }
+            }
+            SurfaceCard {
                 Text("Connection", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(6.dp))
                 val c = session
