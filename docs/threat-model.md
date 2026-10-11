@@ -44,6 +44,10 @@ Out of scope: malware on either device, a compromised OS or Android/GTK stack, p
 | Outbox abuse (fetching others' files / arbitrary paths) | Items bound to a session; ids unguessable; paths never sent to the phone; file change detection; phone must accept | `test_outbox_*` |
 | Resume abuse (splicing data) | Offset must equal the bytes held; final SHA-256 covers the whole file | `test_wrong_offset_*`, interop resume test |
 | Mobile-data use / leakage off the LAN | Only private IPv4 targets accepted; sockets bound to the Wi-Fi network when the receiver is on it | `PairingInfoTest`; binding is **not** unit-testable (see testing.md) |
+| D: hostile folder paths (`../`, absolute, drive, Unicode tricks) | Strict validation rejects (never repairs) the whole request; phone re-validates outbox folders | `test_hostile_relpaths_*`, `test_api_rejects_hostile_dirs_*`, `SafeRelDirTest`, interop |
+| Local attacker plants symlinks in the destination | fd-based walk + `O_NOFOLLOW`; top folder always freshly created/aliased | `test_symlink_planted_mid_transfer_is_refused`, `test_symlinked_top_folder_is_not_followed` |
+| mDNS spoofing / rogue "LocalBridge" on the LAN | Discovery is only a locator; pinned cert + QR secret decide trust; announced addresses must be private IPv4; cert mismatch not retried | `LocatorTest` |
+| Information leak via mDNS | Only random per-run id is announced (no name/fingerprint/secret), only on the bound interface; can be switched off | `test_advertised_service_is_discoverable_and_carries_only_the_rid` |
 | Receiver left running | Explicit Start/Stop; stop closes the socket, revokes sessions, wipes partials and the TLS dir | `test_receiver_stops_listening_and_cleans_up` |
 | Secrets in logs | Access log disabled; secrets never logged; tokens kept as SHA-256 | review |
 | Browser-origin attacks | No CORS headers, no cookies, bearer tokens, no docs/openapi endpoints | `test_no_docs_or_extra_web_endpoints` |
@@ -58,6 +62,9 @@ person can notice an unexpected pairing, but device names are self-reported and 
 identity.
 
 ## Residual risks / unsupported guarantees
+
+* **Windows** has no `dir_fd`/`O_NOFOLLOW`: the fallback checks for links before use, which a *local* attacker
+  racing the check could theoretically beat. It is tested on Linux only (by forcing that code path).
 
 * No persistent device identity: every session is re-paired. (Safer than a weak trust store, less
   convenient.)

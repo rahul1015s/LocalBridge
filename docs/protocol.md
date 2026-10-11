@@ -130,6 +130,25 @@ content. Notable codes: `unauthorized` 401, `pairing_invalid` 401, `pairing_deni
 `integrity_failed` 422, `rate_limited`/`too_many_*` 429, `insufficient_storage`/`disk_full`/
 `destination_*` 507.
 
+## Folders
+
+`FileSpec.dir` carries a relative folder (`"Trip/day1"`, `/`-separated, <= 16 levels). The receiver
+**rejects the whole transfer** (`422 invalid_path`) if any component is `..`, `.`, empty, absolute, a
+drive path, contains control/bidi characters or NULs, or ends in `.`/space; it never "repairs" a path.
+Files are written with directory file descriptors and `O_NOFOLLOW`, so a symlink planted in the
+destination cannot redirect a write (`409 unsafe_path`). The first folder component is created fresh
+per transfer: if `Trip` already exists the transfer goes to `Trip (1)`, so nothing existing is merged
+into. Empty folders are not transferred; duplicate file names get ` (n)`. Computer -> phone folders
+use the same rules (`dir` and `group` fields on outbox items; the phone validates again before saving).
+
+## Discovery (mDNS)
+
+While receiving, the computer may advertise `_localbridge._tcp` bound to its chosen interface, with
+TXT `{v:1, rid:<16 hex random>}` only. The QR carries the same `rid`. If the phone can't reach the
+QR's address it looks up the `rid` and retries once at the announced private IPv4 address. Discovery
+confers **no trust**: the pinned certificate and the QR secret are still required, and a certificate
+mismatch is never retried.
+
 ## Computer -> phone
 
 The desktop user adds files/text to an outbox addressed to the most recently paired phone. Nothing is

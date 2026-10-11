@@ -46,7 +46,8 @@ Legend: [x] done with test evidence · [~] implemented, not verified on target h
 ### Added after Phase 3
 - [x] Computer → phone outbox (desktop UI, drag-and-drop, phone accept/download/verify), text/links both ways
 - [x] Desktop notifications + Open folder; Wi-Fi socket binding (untestable on JVM)
-- [ ] Folder transfer, saved trusted devices, mDNS discovery, Windows/macOS receivers (deferred: need a key-management design / more platforms)
+- [x] Folder transfer both ways (strict paths, symlink-safe), mDNS locator, portable core, CLI + Tk receivers, CI workflow
+- [ ] Run on real Windows/macOS; saved trusted devices (needs a key-management design); empty-folder transfer; Tk drag-and-drop
 
 ### Phase 4 — Fedora UX
 - [x] GTK4/Libadwaita window: start/stop, QR (expiring), approvals, progress, destination, devices

@@ -96,7 +96,7 @@ def test_tk_full_flow(app, tmp_path):
         fid = tr["files"][i]["file_id"]
         res: dict = {}
         th = threading.Thread(
-            target=lambda f=fid, d=data: res.update(
+            target=lambda f=fid, d=data, res=res: res.update(
                 put=c.request(
                     "PUT", f"/v1/transfers/{tr['transfer_id']}/files/{f}/content", body=d
                 ),
