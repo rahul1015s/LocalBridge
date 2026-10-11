@@ -7,6 +7,7 @@ import io.github.localbridge.LocalBridgeApp
 import io.github.localbridge.Session
 import io.github.localbridge.core.HttpReceiver
 import io.github.localbridge.core.PairingInfo
+import io.github.localbridge.core.pairWithLocator
 import io.github.localbridge.core.ReceiverException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -68,10 +69,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _pair.value = PairState.Connecting
         pairJob = viewModelScope.launch {
             try {
-                val (gw, name) = HttpReceiver.pair(info, settings.state.value.deviceName, container.localSocketFactory(info.host)) {
-                    _pair.value = PairState.CertificateVerified
+                var usedHost = info.host
+                val (gw, name) = pairWithLocator(info, container.locator) { target ->
+                    usedHost = target.host
+                    HttpReceiver.pair(target, settings.state.value.deviceName, container.localSocketFactory(target.host)) {
+                        _pair.value = PairState.CertificateVerified
+                    }
                 }
-                container.setSession(Session(gw, name, info.host))
+                container.setSession(Session(gw, name, usedHost))
                 _pair.value = PairState.Idle
                 _stack.value = listOf(Screen.HOME)
                 pendingText?.let { t -> pendingText = null; sendText(t) }
@@ -85,6 +90,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+
+    /** Computers announcing themselves on this network (diagnostic for the pair screen). */
+    val nearby: kotlinx.coroutines.flow.Flow<Int> get() = container.locator.nearby()
 
     fun cancelPairing() {
         pairJob?.cancel()

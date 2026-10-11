@@ -8,6 +8,8 @@ dependencies = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
   "cryptography>=43",
+  "zeroconf>=0.130",
+  "psutil>=5.9",
   "qrcode[pil]>=7.4",
 ]
 
@@ -15,7 +17,7 @@ dependencies = [
 dev = ["pytest>=8", "pytest-asyncio>=0.24", "httpx>=0.27", "ruff>=0.6"]
 
 [project.scripts]
-localbridge = "localbridge.app:main"
+localbridge = "localbridge.__main__:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -41,6 +43,8 @@ ignore = ["S101"]
 "localbridge/ui/*" = ["E501"]
 "localbridge/app.py" = ["E501"]
 "localbridge/storage.py" = ["E501"]
+"localbridge/cli.py" = ["E501"]
+"localbridge/ui_tk.py" = ["E501"]
 "localbridge/server.py" = ["E501"]
 
 [tool.ruff.lint.flake8-bugbear]

@@ -59,6 +59,9 @@ fun PairScreen(vm: AppViewModel) {
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted = it }
     var manual by rememberSaveable { mutableStateOf("") }
     var showManual by rememberSaveable { mutableStateOf(false) }
+    val nearby by vm.nearby.collectAsState(initial = null)
+    var waited by remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(Unit) { kotlinx.coroutines.delay(6000); waited = true }
     val busy = state is PairState.Connecting || state is PairState.CertificateVerified
 
     Scaffold(
@@ -83,6 +86,12 @@ fun PairScreen(vm: AppViewModel) {
                 StepRow(4, "Scan the code it shows.")
             }
 
+            when {
+                (nearby ?: 0) > 0 -> Text("✓ A computer running LocalBridge is visible on this network.",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+                waited -> Text("No computer is announcing itself here. Scanning the code can still work; if it doesn't, the hotspot may block device-to-device traffic.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             if (busy) {
                 SurfaceCard(container = MaterialTheme.colorScheme.primaryContainer) {
                     Row(verticalAlignment = Alignment.CenterVertically) {

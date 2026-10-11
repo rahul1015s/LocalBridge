@@ -46,7 +46,9 @@ class Harness:
 def make_harness(tmp_path, limits: Limits | None = None) -> Harness:
     dest = tmp_path / "inbox"
     dest.mkdir()
-    cfg = ReceiverConfig("127.0.0.1", 0, dest, "TestBox", limits or Limits(min_free_space_margin=0))
+    cfg = ReceiverConfig(
+        "127.0.0.1", 0, dest, "TestBox", limits or Limits(min_free_space_margin=0), advertise=False
+    )
     svc = ReceiverService(cfg)
     svc.start()
     return Harness(svc, dest)

@@ -221,7 +221,15 @@ class MainWindow(Adw.ApplicationWindow):
         self.dest_row.add_suffix(open_btn)
         self.dest_row.add_suffix(pick)
         self.pick_btn = pick
-        for r in (self.name_row, self.iface_row, self.dest_row):
+        self.adv_row = Adw.SwitchRow(
+            title="Let nearby phones find this computer",
+            subtitle="Announces a random ID on this network while receiving. Pairing still needs the QR code.",
+        )
+        self.adv_row.set_active(self.settings.advertise)
+        self.adv_row.connect(
+            "notify::active", lambda r, _p: setattr(self.settings, "advertise", r.get_active())
+        )
+        for r in (self.name_row, self.iface_row, self.dest_row, self.adv_row):
             grp.add(r)
         page.append(grp)
         self._update_dest_row()
@@ -298,6 +306,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.iface_row.set_sensitive(not run)
         self.pick_btn.set_sensitive(not run)
         self.name_row.set_sensitive(not run)
+        self.adv_row.set_sensitive(not run)
         for c in ("suggested-action", "destructive-action"):
             self.start_btn.remove_css_class(c)
         if run:
@@ -366,7 +375,9 @@ class MainWindow(Adw.ApplicationWindow):
         dest = Path(self.settings.destination).expanduser()
         try:
             dest.mkdir(parents=True, exist_ok=True)
-            cfg = ReceiverConfig(ip, 0, dest, self.settings.device_name)
+            cfg = ReceiverConfig(
+                ip, 0, dest, self.settings.device_name, advertise=self.settings.advertise
+            )
             svc = ReceiverService(cfg)
             svc.core.pairing.subscribe(lambda e, p: GLib.idle_add(self._on_pair_event, e, p))
             svc.core.transfers.subscribe(lambda t: self._on_transfer_event(t))

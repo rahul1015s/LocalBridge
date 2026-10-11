@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import secrets
 import shutil
 import threading
 import time
@@ -21,6 +22,7 @@ from starlette.requests import ClientDisconnect
 
 from . import PROTOCOL_VERSION, __version__
 from .certificates import TlsIdentity, generate_identity
+from .discovery import Advertiser
 from .models import (
     ApiError,
     FileState,
@@ -49,6 +51,7 @@ class ReceiverConfig:
     destination: Path
     device_name: str = "Fedora"
     limits: Limits = field(default_factory=Limits)
+    advertise: bool = True  # announce on the local network via mDNS (optional)
 
 
 @dataclass
@@ -402,6 +405,8 @@ class ReceiverService:
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
         self.port: int = 0
+        self.rid: str = ""
+        self._adv: Advertiser | None = None
 
     @property
     def running(self) -> bool:
@@ -442,6 +447,10 @@ class ReceiverService:
                 raise RuntimeError("Receiver failed to start (is the port already in use?).")
             time.sleep(0.02)
         self.port = self._server.servers[0].sockets[0].getsockname()[1]
+        self.rid = secrets.token_hex(8)
+        if cfg.advertise:
+            self._adv = Advertiser(cfg.host, self.port, self.rid)
+            self._adv.start_async()
 
     def pairing_uri(self) -> str:
         """URI for the QR code; only valid while an unexpired offer exists."""
@@ -455,6 +464,7 @@ class ReceiverService:
                 "sid": offer.session_id,
                 "fp": self.identity.fingerprint,
                 "secret": offer.secret,
+                **({"rid": self.rid} if self._adv else {}),
             }
         )
         return f"localbridge://pair?{q}"
@@ -463,6 +473,9 @@ class ReceiverService:
         self.core.transfers.cancel_all("Receiver stopped.")
         self.core.pairing.revoke_all()
         self.core.outbox.drop_session()
+        if self._adv:
+            self._adv.stop()
+            self._adv = None
         if self._server:
             self._server.should_exit = True
         if self._thread:
