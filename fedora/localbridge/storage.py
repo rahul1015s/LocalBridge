@@ -259,13 +259,15 @@ class Destination:
             cur = nxt
         for cand in candidate_names(safe):
             target = cur / cand
+            if target.exists() or target.is_symlink():
+                continue
             try:
-                os.link(partial_path, target)
+                # Only used where dir_fd is unavailable (Windows): rename refuses to overwrite there.
+                os.rename(partial_path, target)
             except FileExistsError:
                 continue
             except OSError as e:
                 raise ApiError(500, "finalize_failed", "Could not finalise file.") from e
-            os.unlink(partial_path)
             return target
         raise ApiError(409, "name_exhausted", "Could not find a free file name.")
 

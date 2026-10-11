@@ -47,6 +47,7 @@ class AppContainer(private val app: Application) {
         },
     )
 
+    val locator = io.github.localbridge.core.NsdLocator(app)
     val incoming = IncomingEngine(scope, MediaStoreSink(app.contentResolver))
 
     /** Binds sockets to the Wi-Fi network the receiver is on, so data can't go over mobile data. */

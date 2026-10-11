@@ -5,11 +5,17 @@ from __future__ import annotations
 import json
 import os
 import socket
+import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 
 def config_dir() -> Path:
+    """Per-user settings folder following each platform's convention."""
+    if sys.platform == "win32":
+        return Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / "LocalBridge"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "LocalBridge"
     return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "localbridge"
 
 
@@ -23,6 +29,7 @@ class Settings:
     device_name: str = field(default_factory=lambda: socket.gethostname()[:64] or "Fedora")
     destination: str = field(default_factory=lambda: str(default_destination()))
     interface: str = ""  # last used interface name; empty = first available
+    advertise: bool = True  # announce this receiver on the LAN (mDNS) while receiving
 
     @classmethod
     def load(cls, path: Path | None = None) -> Settings:
@@ -38,6 +45,8 @@ class Settings:
             v = raw.get(key)
             if isinstance(v, str) and len(v) < 4096:
                 setattr(s, key, v)
+        if isinstance(raw.get("advertise"), bool):
+            s.advertise = raw["advertise"]
         s.device_name = s.device_name.strip()[:64] or cls().device_name
         return s
 

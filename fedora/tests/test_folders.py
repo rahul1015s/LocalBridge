@@ -250,3 +250,49 @@ def test_resume_still_works_inside_folders(h):
     upload_all(h, c, t, [b"0123456789"])
     assert (h.dest / "D" / "big.bin").read_bytes() == b"0123456789"
     assert os.listdir(h.dest / "D") == ["big.bin"]
+
+
+def test_path_fallback_finalizer_matches_fd_finalizer(tmp_path, monkeypatch):
+    """The Windows code path (no dir_fd) must behave the same: nesting, aliasing, no overwrite."""
+    import localbridge.storage as st
+
+    monkeypatch.setattr(st, "_HAS_DIR_FD", False)
+    d = Destination(tmp_path)
+    (tmp_path / "Trip").mkdir()
+    tm: dict[str, str] = {}
+    a = d.finalize(put(d, "f1"), "pic.jpg", ["Trip", "day1"], tm)
+    b = d.finalize(put(d, "f2"), "pic.jpg", ["Trip", "day1"], tm)
+    assert a == tmp_path / "Trip (1)" / "day1" / "pic.jpg" and b.name == "pic (1).jpg"
+    (tmp_path / "x.txt").write_text("keep")
+    c = d.finalize(put(d, "f3", b"new"), "x.txt", [], {})
+    assert c.name == "x (1).txt" and (tmp_path / "x.txt").read_text() == "keep"
+    assert not list((tmp_path / ".localbridge-partial").iterdir())
+
+
+@posix_only
+def test_path_fallback_refuses_symlinked_folders(tmp_path, monkeypatch):
+    import localbridge.storage as st
+
+    monkeypatch.setattr(st, "_HAS_DIR_FD", False)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    dest = tmp_path / "inbox"
+    dest.mkdir()
+    d = Destination(dest)
+    tm: dict[str, str] = {}
+    d.finalize(put(d, "f1"), "a", ["T", "sub"], tm)
+    (dest / "T" / "sub" / "a").unlink()
+    (dest / "T" / "sub").rmdir()
+    (dest / "T" / "sub").symlink_to(outside)
+    with pytest.raises(ApiError):
+        d.finalize(put(d, "f2"), "b", ["T", "sub"], tm)
+    assert list(outside.iterdir()) == []
+
+
+def test_windows_name_rules():
+    from localbridge.storage import sanitize_filename
+
+    assert sanitize_filename("CON", windows=True) == "_CON"
+    assert sanitize_filename("a<b>:c.txt", windows=True) == "a_b__c.txt"
+    assert sanitize_filename("name. ", windows=True) == "name"
+    assert sanitize_filename("CON", windows=False) == "CON"

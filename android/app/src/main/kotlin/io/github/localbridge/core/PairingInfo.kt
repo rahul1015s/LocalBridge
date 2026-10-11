@@ -9,7 +9,11 @@ class PairingInfo(
     val sessionId: String,
     val fingerprint: String,
     val secret: String,
+    /** Random receiver id advertised over mDNS; lets the phone locate the computer. Optional. */
+    val rid: String? = null,
 ) {
+    fun at(host: String, port: Int) = PairingInfo(host, port, sessionId, fingerprint, secret, rid)
+
     // Never print the secret.
     override fun toString() = "PairingInfo(host=$host, port=$port)"
 
@@ -18,6 +22,7 @@ class PairingInfo(
         private val ID = Regex("""^[A-Za-z0-9_-]{8,64}$""")
         private val FP = Regex("""^[0-9a-f]{64}$""")
         private val SECRET = Regex("""^[A-Za-z0-9_-]{16,128}$""")
+        private val RID = Regex("""^[0-9a-f]{16}$""")
 
         /** True for private, link-local, CGNAT and loopback IPv4 (never public addresses). */
         fun isLocalAddress(ip: String): Boolean {
@@ -50,7 +55,9 @@ class PairingInfo(
             val fp = q["fp"].orEmpty()
             val secret = q["secret"].orEmpty()
             require(ID.matches(sid) && FP.matches(fp) && SECRET.matches(secret)) { "Malformed code." }
-            PairingInfo(host, port, sid, fp, secret)
+            val rid = q["rid"]
+            require(rid == null || RID.matches(rid)) { "Malformed code." }
+            PairingInfo(host, port, sid, fp, secret, rid)
         }
     }
 }
