@@ -8,7 +8,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio  # noqa: E402
+from gi.repository import Adw, Gio, Gtk  # noqa: E402
 
 from . import __version__  # noqa: E402
 from .settings import Settings  # noqa: E402
@@ -27,6 +27,7 @@ class LocalBridgeApp(Adw.Application):
     def do_startup(self):
         Adw.Application.do_startup(self)
         style.install()
+        Gtk.Window.set_default_icon_name("io.github.localbridge.LocalBridge")
         act = Gio.SimpleAction.new("about", None)
         act.connect("activate", self._about)
         self.add_action(act)
@@ -42,7 +43,7 @@ class LocalBridgeApp(Adw.Application):
     def _about(self, *_):
         Adw.AboutDialog(
             application_name="LocalBridge",
-            application_icon="network-wireless-symbolic",
+            application_icon="io.github.localbridge.LocalBridge",
             version=__version__,
             comments="Private file transfer between your phone and this computer. No cloud, no account.",
             license_type=__import__("gi.repository.Gtk", fromlist=["License"]).License.GPL_3_0,

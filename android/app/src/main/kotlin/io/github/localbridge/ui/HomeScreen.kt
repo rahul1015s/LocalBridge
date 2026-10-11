@@ -48,9 +48,6 @@ fun HomeScreen(vm: AppViewModel) {
     val session by vm.session.collectAsState()
     val history by vm.history.entries.collectAsState()
     val settings by vm.settings.state.collectAsState()
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        if (uris.isNotEmpty()) vm.send(uris.map { it.toString() })
-    }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -83,7 +80,7 @@ fun HomeScreen(vm: AppViewModel) {
                     }
                     Spacer(Modifier.height(16.dp))
                     Button(
-                        onClick = { picker.launch(arrayOf("*/*")) },
+                        onClick = { vm.navigate(Screen.SEND) },
                         modifier = Modifier.fillMaxWidth().height(56.dp),
                     ) {
                         Icon(Icons.Rounded.UploadFile, null)

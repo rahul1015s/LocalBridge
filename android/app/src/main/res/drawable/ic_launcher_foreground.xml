@@ -1,0 +1,7 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- Bridge: arch + deck, kept inside the 66dp adaptive-icon safe zone -->
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="5" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M30,64 C36,38 72,38 78,64"/>
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="5" android:strokeLineCap="round" android:pathData="M26,64 L82,64"/>
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="4" android:strokeLineCap="round" android:pathData="M42,64 L42,51 M54,64 L54,47 M66,64 L66,51"/>
+    <path android:fillColor="#FFFFFF" android:pathData="M54,28 L62,37 L46,37 Z"/>
+</vector>
