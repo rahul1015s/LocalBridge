@@ -247,11 +247,14 @@ class MainWindow(Adw.ApplicationWindow):
         # computer -> phone
         self.out_group = Adw.PreferencesGroup(
             title="Send to phone",
-            description="Choose files, or drop them anywhere on this window.",
+            description="Choose files or a folder, or drop them anywhere on this window.",
             visible=False,
         )
         pick_out = Adw.ActionRow(title="Files", subtitle="The phone asks to accept before saving")
-        b = Gtk.Button(label="Choose…", valign=Gtk.Align.CENTER)
+        bf = Gtk.Button(label="Folder…", valign=Gtk.Align.CENTER)
+        bf.connect("clicked", self._choose_outgoing_folder)
+        pick_out.add_suffix(bf)
+        b = Gtk.Button(label="Files…", valign=Gtk.Align.CENTER)
         b.connect("clicked", self._choose_outgoing)
         pick_out.add_suffix(b)
         self.out_group.add(pick_out)
@@ -532,9 +535,21 @@ class MainWindow(Adw.ApplicationWindow):
         return GLib.SOURCE_REMOVE
 
     def _ask_approve(self, t: Transfer) -> None:
-        shown = [f"• {f.name}  ({human_size(f.declared_size)})" for f in t.files[:8]]
-        if len(t.files) > 8:
-            shown.append(f"…and {len(t.files) - 8} more")
+        folders: dict[str, list] = {}
+        loose = []
+        for f in t.files:
+            (folders.setdefault(f.dirs[0], []) if f.dirs else loose).append(f)
+        shown = [
+            f"📁 {top}/  ({len(fs)} file{'s' if len(fs) != 1 else ''}, "
+            f"{human_size(sum(x.declared_size or 0 for x in fs))})"
+            for top, fs in list(folders.items())[:6]
+        ]
+        shown += [
+            f"• {f.name}  ({human_size(f.declared_size)})" for f in loose[: max(0, 8 - len(shown))]
+        ]
+        hidden = len(folders) + len(loose) - len(shown)
+        if hidden > 0:
+            shown.append(f"…and {hidden} more")
         total = human_size(t.total_declared) if t.size_known else "size not declared"
         dest = self.settings.destination
         d = Adw.AlertDialog(
@@ -581,6 +596,19 @@ class MainWindow(Adw.ApplicationWindow):
             return
         self._queue_paths([f.get_path() for f in files if f.get_path()])
 
+    def _choose_outgoing_folder(self, *_):
+        Gtk.FileDialog(title="Choose a folder to send to your phone").select_folder(
+            self, None, self._outgoing_folder_chosen
+        )
+
+    def _outgoing_folder_chosen(self, dlg, res):
+        try:
+            f = dlg.select_folder_finish(res)
+        except GLib.Error:
+            return
+        if f and f.get_path():
+            self._queue_paths([f.get_path()])
+
     def _on_drop(self, _target, value, *_):
         if not self._target_session():
             self._toast("Pair a phone first, then drop files here.")
@@ -597,7 +625,11 @@ class MainWindow(Adw.ApplicationWindow):
 
         for path in paths:
             try:
-                self.service.core.outbox.add_file(sess.session_id, Path(path))
+                if Path(path).is_dir():
+                    n = len(self.service.core.outbox.add_folder(sess.session_id, Path(path)))
+                    self._toast(f"Queued {n} files from “{Path(path).name}”")
+                else:
+                    self.service.core.outbox.add_file(sess.session_id, Path(path))
             except ApiError as e:
                 self._toast(e.message)
         self._refresh_outbox()
@@ -630,7 +662,40 @@ class MainWindow(Adw.ApplicationWindow):
             "DECLINED": "Declined",
             "FAILED": "Failed",
         }
+        shown_groups: set[str] = set()
         for it in items:
+            if it.group:
+                if it.group in shown_groups:
+                    continue
+                shown_groups.add(it.group)
+                members = [x for x in items if x.group == it.group]
+                counts: dict[str, int] = {}
+                for m in members:
+                    counts[m.state] = counts.get(m.state, 0) + 1
+                total = sum(m.size for m in members)
+                summary = " · ".join(f"{n} {labels.get(k, k).lower()}" for k, n in counts.items())
+                top = (it.dir or "").split("/")[0]
+                row = Adw.ActionRow(
+                    title=GLib.markup_escape_text(f"Folder “{top}” — {len(members)} files"),
+                    subtitle=GLib.markup_escape_text(f"{human_size(total)} · {summary}"),
+                )
+                if any(m.state in ("PREPARING", "READY") for m in members):
+                    b = Gtk.Button(
+                        icon_name="edit-delete-symbolic",
+                        valign=Gtk.Align.CENTER,
+                        tooltip_text="Withdraw folder",
+                    )
+                    b.add_css_class("flat")
+                    b.update_property([Gtk.AccessibleProperty.LABEL], ["Withdraw folder"])
+                    b.connect(
+                        "clicked",
+                        lambda _b, ms=members: [
+                            self.service.core.outbox.cancel(m.item_id) for m in ms
+                        ],
+                    )
+                    row.add_suffix(b)
+                self.out_list.append(row)
+                continue
             title = it.name if it.kind == "file" else (it.text or "")[:60]
             sub = labels.get(it.state, it.state) + (f" · {it.detail}" if it.detail else "")
             if it.kind == "file":

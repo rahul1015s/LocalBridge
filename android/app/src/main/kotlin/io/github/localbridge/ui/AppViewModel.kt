@@ -17,7 +17,7 @@ import kotlinx.coroutines.launch
 
 enum class Screen { HOME, PAIR, SEND, TRANSFERS, HISTORY, SETTINGS }
 
-data class Picked(val ref: String, val name: String, val size: Long?, val readable: Boolean)
+data class Picked(val ref: String, val name: String, val size: Long?, val readable: Boolean, val dir: String? = null)
 
 sealed interface PairState {
     data object Idle : PairState
@@ -121,14 +121,33 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Scans a folder chosen with the system folder picker and adds all of its files. */
+    fun addFolder(tree: android.net.Uri) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val resolver = getApplication<Application>().contentResolver
+            val access = io.github.localbridge.transfer.ContentTreeAccess(resolver, tree)
+            val name = io.github.localbridge.transfer.ContentTreeAccess.rootName(resolver, tree)
+            val rootId = android.provider.DocumentsContract.getTreeDocumentId(tree)
+            val result = io.github.localbridge.transfer.FolderScanner().scan(access, name, rootId)
+            val have = _selection.value.map { it.ref }.toSet()
+            _selection.update { cur -> cur + result.files.filter { it.ref !in have }.map { Picked(it.ref, it.name, it.size, true, it.dir) } }
+            _textStatus.value = when {
+                result.files.isEmpty() -> "That folder has no files."
+                result.truncated -> "Only the first ${result.files.size} files were added (limit)."
+                result.skippedDeep > 0 -> "Added ${result.files.size} files; ${result.skippedDeep} very deep folders were skipped."
+                else -> null
+            }
+        }
+    }
+
     fun removeFromSelection(ref: String) = _selection.update { l -> l.filter { it.ref != ref } }
     fun clearSelection() { _selection.value = emptyList() }
 
     fun sendSelection() {
         val s = session.value ?: return navigate(Screen.PAIR)
-        val refs = _selection.value.filter { it.readable }.map { it.ref }
-        if (refs.isEmpty()) return
-        engine.enqueue(s.gateway, s.receiverName, refs)
+        val picked = _selection.value.filter { it.readable }
+        if (picked.isEmpty()) return
+        engine.enqueue(s.gateway, s.receiverName, picked.map { it.ref }, picked.filter { it.dir != null }.associate { it.ref to it.dir!! })
         clearSelection()
         _stack.update { it.filter { sc -> sc != Screen.SEND } + Screen.TRANSFERS }
     }

@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
 enum class InState { OFFERED, DOWNLOADING, SAVED, FAILED, DECLINED, DISMISSED }
@@ -45,7 +46,8 @@ interface FileSink {
         fun abort()
     }
 
-    fun create(displayName: String): Target
+    /** [dir] are already-validated relative folder components (may be empty). */
+    fun create(displayName: String, dir: List<String> = emptyList()): Target
 }
 
 /**
@@ -64,6 +66,7 @@ class IncomingEngine(
     private var pollJob: Job? = null
     private val jobs = HashMap<String, Job>()
     private var gateway: ReceiverGateway? = null
+    private val gate = kotlinx.coroutines.sync.Semaphore(2) // folders can hold thousands of files
 
     fun start(gw: ReceiverGateway) {
         stop()
@@ -106,7 +109,7 @@ class IncomingEngine(
                     update(id) { it.copy(state = InState.SAVED) }
                     runCatching { gw.outboxDone(id, "saved", null) }
                 } else {
-                    download(gw, item)
+                    gate.withPermit { download(gw, item) }
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -123,13 +126,20 @@ class IncomingEngine(
         scope.launch { runCatching { gw.outboxDone(id, "declined", null) } }
     }
 
+    /** Accept every still-offered file of one folder send. */
+    fun acceptGroup(group: String) =
+        _items.value.filter { it.entry.group == group && it.state == InState.OFFERED }.forEach { accept(it.entry.id) }
+
+    fun declineGroup(group: String) =
+        _items.value.filter { it.entry.group == group && it.state == InState.OFFERED }.forEach { decline(it.entry.id) }
+
     fun dismiss(id: String) = update(id) { it.copy(state = InState.DISMISSED) }
 
     private suspend fun download(gw: ReceiverGateway, item: IncomingItem) {
         val e = item.entry
         update(e.id) { it.copy(state = InState.DOWNLOADING, received = 0, error = null, note = null) }
         val target = try {
-            sink.create(e.name)
+            sink.create(e.name, safeRelDir(e.dir) ?: throw IOException("unsafe folder"))
         } catch (ex: IOException) {
             update(e.id) { it.copy(state = InState.FAILED, error = "Can't create the file on this phone.") }
             return
@@ -178,5 +188,20 @@ class IncomingEngine(
             update(e.id) { it.copy(state = InState.FAILED, error = "Couldn't write the file on this phone.", note = null) }
             runCatching { gw.outboxDone(e.id, "failed", "Could not write file") }
         }
+    }
+}
+
+/**
+ * Validates a remote-supplied relative folder. Returns null (reject) for anything that could climb
+ * out of the download folder; otherwise cleaned components. Strict: nothing is "repaired".
+ */
+fun safeRelDir(raw: String?, maxDepth: Int = 16): List<String>? {
+    if (raw.isNullOrEmpty()) return emptyList()
+    if (raw.any { it.isISOControl() } || raw.startsWith("/") || raw.startsWith("\\") || Regex("^[A-Za-z]:").containsMatchIn(raw)) return null
+    val parts = raw.replace('\\', '/').trimEnd('/').split('/')
+    if (parts.size > maxDepth) return null
+    return parts.map { p ->
+        if (p.isEmpty() || p == "." || p == ".." || p != p.trim() || p.endsWith(".")) return null
+        safeFileName(p)
     }
 }

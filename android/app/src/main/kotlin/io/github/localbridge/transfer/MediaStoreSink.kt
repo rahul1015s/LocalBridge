@@ -24,14 +24,14 @@ fun safeFileName(raw: String, max: Int = 200): String {
 
 /** Saves into Downloads/LocalBridge via MediaStore (no storage permission needed, Android 10+). */
 class MediaStoreSink(private val resolver: ContentResolver) : FileSink {
-    override fun create(displayName: String): FileSink.Target {
+    override fun create(displayName: String, dir: List<String>): FileSink.Target {
         val name = safeFileName(displayName)
         val ext = name.substringAfterLast('.', "").lowercase()
         val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, name)
             put(MediaStore.Downloads.MIME_TYPE, mime)
-            put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/LocalBridge")
+            put(MediaStore.Downloads.RELATIVE_PATH, (listOf(Environment.DIRECTORY_DOWNLOADS, "LocalBridge") + dir).joinToString("/"))
             put(MediaStore.Downloads.IS_PENDING, 1) // invisible to other apps until complete
         }
         val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)

@@ -265,3 +265,53 @@ def test_stop_withdraws_outbox_items(tmp_path):
     item = hh.svc.core.outbox.add_text(sid, "bye")
     hh.svc.stop()
     assert item.state == "DECLINED"
+
+
+# ---- folders (computer -> phone) ----------------------------------------------------------------
+def wait_ready(h, items, secs=10):
+    end = time.time() + secs
+    while any(i.state == "PREPARING" for i in items) and time.time() < end:
+        time.sleep(0.05)
+
+
+def test_outbox_folder_walks_without_following_symlinks(h, tmp_path):
+    import os
+    import sys
+
+    root = tmp_path / "Album"
+    (root / "sub" / "deep").mkdir(parents=True)
+    (root / "a.txt").write_text("a")
+    (root / "sub" / "b.txt").write_text("b")
+    (root / "sub" / "deep" / "c.txt").write_text("c")
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOP SECRET")
+    if sys.platform != "win32":
+        os.symlink(secret, root / "link.txt")  # file symlink
+        os.symlink(tmp_path, root / "loop")  # dir symlink (would escape / loop)
+    c = h.pair()
+    sid = h.svc.core.pairing.authenticate(c.token).session_id
+    items = h.svc.core.outbox.add_folder(sid, root)
+    wait_ready(h, items)
+    names = sorted((i.dir, i.name) for i in items)
+    assert names == [("Album", "a.txt"), ("Album/sub", "b.txt"), ("Album/sub/deep", "c.txt")]
+    assert len({i.group for i in items}) == 1
+    listing = c.request("GET", "/v1/outbox")[1]["items"]
+    assert {i["dir"] for i in listing} == {"Album", "Album/sub", "Album/sub/deep"}
+    assert "TOP SECRET" not in str(listing) and str(tmp_path) not in str(listing)
+    st, body = c.request("GET", f"/v1/outbox/{items[0].item_id}/content")
+    assert st == 200
+
+
+def test_outbox_folder_errors(h, tmp_path):
+    import pytest
+
+    from localbridge.models import ApiError
+
+    c = h.pair()
+    sid = h.svc.core.pairing.authenticate(c.token).session_id
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    with pytest.raises(ApiError):
+        h.svc.core.outbox.add_folder(sid, empty)
+    with pytest.raises(ApiError):
+        h.svc.core.outbox.add_folder(sid, tmp_path / "missing")

@@ -115,6 +115,22 @@ class InteropTest {
         gw.sendMessage("note from phone")
     }
 
+    @Test fun folderUploadKeepsStructureAndHostilePathsAreRefused() = runBlocking {
+        assumeTrue("interop env not set", uriFile != null)
+        val info = PairingInfo.parse(uri!!).getOrThrow()
+        val (gw, _) = HttpReceiver.pair(info, "Folder Phone", null) {}
+        try {
+            gw.createTransfer(listOf(FileSpec("x", 1, "../../escape")))
+            fail("hostile path must be refused")
+        } catch (e: ReceiverException) { assertEquals("invalid_path", e.code) }
+        val t = gw.createTransfer(listOf(FileSpec("one.bin", 3, "InteropFolder"), FileSpec("two.bin", 3, "InteropFolder/sub")))
+        Thread.sleep(800)
+        for ((i, f) in t.files.withIndex()) {
+            val up = gw.upload(t.transferId, f.fileId, 3, 0L, { "abc".byteInputStream() }) {}
+            gw.finalize(t.transferId, f.fileId, up.sha256, up.bytes)
+        }
+    }
+
     @Test fun wrongFingerprintFailsClosed() = runBlocking {
         assumeTrue("interop env not set", uriFile != null)
         val real = PairingInfo.parse(uri!!).getOrThrow()

@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.PhotoLibrary
@@ -52,6 +53,9 @@ fun SendScreen(vm: AppViewModel) {
     }
     val docs = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         vm.addToSelection(uris.map { it.toString() })
+    }
+    val folder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) vm.addFolder(uri)
     }
     val total = selection.filter { it.readable }.sumOf { it.size ?: 0L }
     val anyUnknown = selection.any { it.readable && it.size == null }
@@ -110,6 +114,8 @@ fun SendScreen(vm: AppViewModel) {
                     SourceButton(Icons.Rounded.FolderOpen, "Any file", Modifier.weight(1f)) { docs.launch(arrayOf("*/*")) }
                 }
                 Spacer(Modifier.height(12.dp))
+                SourceButton(Icons.Rounded.Folder, "Whole folder (keeps its structure)", Modifier.fillMaxWidth()) { folder.launch(null) }
+                Spacer(Modifier.height(12.dp))
                 var text by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf("") }
                 val status by vm.textStatus.collectAsState()
                 SurfaceCard {
@@ -129,7 +135,23 @@ fun SendScreen(vm: AppViewModel) {
             if (selection.isEmpty()) {
                 item { EmptyState(Icons.Rounded.FolderOpen, "Nothing selected", "Choose a source above. You can add from several places before sending.") }
             } else {
-                items(selection, key = { it.ref }) { f ->
+                val folders = selection.filter { it.dir != null }.groupBy { it.dir!!.substringBefore('/') }
+                items(folders.keys.toList(), key = { "folder:$it" }) { top ->
+                    val fs = folders.getValue(top)
+                    SurfaceCard {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Rounded.Folder, null, tint = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(top, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${fs.size} files · ${formatBytes(fs.sumOf { it.size ?: 0L })}", style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            IconButton(onClick = { fs.forEach { vm.removeFromSelection(it.ref) } }) { Icon(Icons.Rounded.Close, contentDescription = "Remove folder $top") }
+                        }
+                    }
+                }
+                items(selection.filter { it.dir == null }, key = { it.ref }) { f ->
                     SurfaceCard {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {

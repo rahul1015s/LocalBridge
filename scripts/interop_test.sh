@@ -20,3 +20,5 @@ cmp "$WORK/test.bin" "$WORK/inbox/interop-ü.bin" && echo "OK: received file is 
 cmp "$WORK/test.bin" "$WORK/inbox/resumed.bin" && echo "OK: interrupted upload resumed to a byte-identical file"
 [ "$(cat "$WORK/inbox/message.txt")" = "note from phone" ] && echo "OK: text message delivered"
 [ "$(cat "$WORK/inbox/unknown-size.bin")" = "chunked-unknown-length" ] && echo "OK: unknown-size (chunked) upload received"
+[ "$(cat "$WORK/inbox/InteropFolder/one.bin")" = "abc" ] && [ "$(cat "$WORK/inbox/InteropFolder/sub/two.bin")" = "abc" ] && echo "OK: folder structure preserved"
+[ ! -e "$WORK/escape" ] && [ ! -e "$WORK/../escape" ] && echo "OK: hostile path wrote nothing outside"
